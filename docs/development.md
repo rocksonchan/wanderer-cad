@@ -19,14 +19,19 @@ Use the branch and Git commit hash to identify a custom build. The official
 upstream changelog is left alone; personal development notes live here.
 
 The original repository is the `upstream` remote. In this checkout its push URL
-is disabled, and `push.default` is `nothing`. `main` remains the unmodified
-upstream baseline. The personal fork is
+is disabled, and `push.default` is `nothing`. `upstream/main` tracks the author's
+baseline after fetching. Our `main` holds the tested personal version, including
+the reset feature, and tracks `origin/main`. The personal fork is
 [rocksonchan/wanderer-cad](https://github.com/rocksonchan/wanderer-cad), connected
-as `origin`. Publish the custom branch explicitly:
+as `origin`. Publish our main branch explicitly:
 
 ```sh
-git push -u origin codex/theme-reset
+git push -u origin main
 ```
+
+Start each new feature on a new `codex/` branch from our updated `main`. Test it,
+then merge it into our `main` and push. The original `codex/theme-reset` branch
+is retained as a reference for the first feature.
 
 ## Reload without reinstalling
 
@@ -79,13 +84,16 @@ feature, with current scene and preferences preserved as appropriate.
 ## Bring in author updates
 
 Save work and commit it first. Fetching downloads the author's commits without
-changing the working files. Inspect the update before merging:
+changing the working files. Start an update branch from our current `main`,
+using a fresh branch name for each update, and inspect the author's changes:
 
 ```sh
+git switch main
+git pull --ff-only origin main
 git fetch upstream
+git switch -c codex/upstream-update-YYYYMMDD
 git log --oneline HEAD..upstream/main
 git diff HEAD...upstream/main -- wanderer_cad/preferences.py wanderer_cad/registration.py
-git switch codex/theme-reset
 git merge upstream/main
 ```
 
@@ -93,6 +101,19 @@ Resolve any conflicts by preserving the author's new behaviour and the reset
 feature. Run the focused suite again, inspect affected upstream tests, and
 reload the add-on after the merge is complete. A clean text merge still needs
 behaviour checks. Do not force-push or overwrite the author's files wholesale.
+
+Once the update is tested and any conflict resolutions are committed, bring it
+into our main branch and publish it to our fork:
+
+```sh
+git switch main
+git merge --ff-only codex/upstream-update-YYYYMMDD
+git push origin main
+```
+
+If `main` has advanced meanwhile, integrate its changes on the update branch
+and test again before merging. Author updates are not automatic: merge them
+when ready, preserving both our features and theirs.
 
 ## Package
 
