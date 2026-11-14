@@ -168,7 +168,7 @@ from .command_line import (
     DESSIN_OT_osnap_set, _VBAR, register_osnap_hold_keys, unregister_osnap_hold_keys, cmd_bar_cb, cmd_hit, register_cmd_keymap, register_mouse_track,
     unregister_cmd_keymap, unregister_mouse_track, views_bar_cb,
 )
-from .preferences import DESSIN_AP_prefs, DESSIN_OT_install_theme, DESSIN_OT_prefs_reset
+from .preferences import DESSIN_AP_prefs, DESSIN_OT_install_theme, DESSIN_OT_prefs_reset, DESSIN_OT_theme_reset
 
 
 classes = (
@@ -439,6 +439,7 @@ classes = (
     DESSIN_OT_shortcuts_clear,
     DESSIN_OT_prefs_reset,
     DESSIN_OT_install_theme,
+    DESSIN_OT_theme_reset,
     DESSIN_OT_trim_mode,
     DESSIN_AP_prefs,
     DESSIN_MT_polar_angle,

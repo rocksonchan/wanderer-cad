@@ -49,10 +49,31 @@ class DESSIN_OT_prefs_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class DESSIN_OT_theme_reset(bpy.types.Operator):
+    bl_idname = "dessin.theme_reset"
+    bl_label = "Reset to Blender Default"
+    bl_description = ("Restores Blender's default theme and Wanderer's default toolbar icon colors; "
+                      "other add-on settings and keyboard shortcuts are kept")
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        result = bpy.ops.preferences.reset_default_theme()
+        if 'FINISHED' not in result:
+            return result
+        prefs = context.preferences.addons[__package__].preferences
+        if prefs.icon_palette != PREF_DEFAULTS["icon_palette"]:
+            prefs.icon_palette = PREF_DEFAULTS["icon_palette"]
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        self.report({'INFO'}, "Blender theme and Wanderer icon colors reset to defaults")
+        return {'FINISHED'}
+
+
 class DESSIN_OT_install_theme(bpy.types.Operator):
     bl_idname = "dessin.install_theme"
     bl_label = "Install theme"
-    bl_description = "Installs and applies the theme (dark blue-gray « Blueprint », light « Vellum » or black and red « Ghost », which also switches the toolbar icons to Target). It changes Blender's colors and rounds the toolbar; pick another theme in Preferences > Themes to go back"
+    bl_description = "Installs and applies the theme (dark blue-gray « Blueprint », light « Vellum » or black and red « Ghost », which also switches the toolbar icons to Target). Use Reset to Blender Default to restore the default appearance"
     bl_options = {'REGISTER'}
 
     which: bpy.props.EnumProperty(items=(('BLUEPRINT', "Wanderer Blueprint", "Dark theme"), ('VELLUM', "Wanderer Vellum", "Light theme"),
@@ -301,6 +322,7 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
         trow.operator(DESSIN_OT_install_theme.bl_idname, text="Wanderer Blueprint").which = 'BLUEPRINT'
         trow.operator(DESSIN_OT_install_theme.bl_idname, text="Wanderer Vellum").which = 'VELLUM'
         trow.operator(DESSIN_OT_install_theme.bl_idname, text="Wanderer Ghost").which = 'GHOST'
+        abox.operator(DESSIN_OT_theme_reset.bl_idname, icon='LOOP_BACK')
         gbox = layout.box()
         gbox.label(text="Gumball")
         gcol = gbox.column(align=True)
