@@ -20,8 +20,9 @@ upstream changelog is left alone; personal development notes live here.
 
 The original repository is the `upstream` remote. In this checkout its push URL
 is disabled, and `push.default` is `nothing`. `main` remains the unmodified
-upstream baseline. No personal GitHub fork has been created or pushed yet.
-If a fork is created later, add it as `origin` and push explicitly:
+upstream baseline. The personal fork is
+[rocksonchan/wanderer-cad](https://github.com/rocksonchan/wanderer-cad), connected
+as `origin`. Publish the custom branch explicitly:
 
 ```sh
 git push -u origin codex/theme-reset
