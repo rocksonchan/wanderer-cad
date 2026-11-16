@@ -202,8 +202,8 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
         description="G, R and S activate the Toolkit Move, Rotate and Scale tools (Object and Edit mode) instead of Blender's own. "
                     "Off by default: you can still assign any key to any tool below")
     view_pan: bpy.props.BoolProperty(
-        name="Pan in orthographic side views", default=True, update=_update_view_keymap,
-        description="In Front / Top / Right... views the orbit button pans instead of orbiting (perspective views are unchanged)")
+        name="Pan in orthographic side views", default=False, update=_update_view_keymap,
+        description="Replace orbit with pan in Front / Top / Right... views. Leave off for standard Blender navigation")
     view_persp: bpy.props.BoolProperty(
         name="Ctrl + Shift + orbit button: switch to perspective", default=True, update=_update_view_keymap,
         description="In orthographic side views, holding Ctrl + Shift with the orbit button switches the view to perspective and orbits")
@@ -415,6 +415,8 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
             vbox.label(text="The middle button is already used by the orbit / context menu setting above.", icon='ERROR')
         vbox.separator()
         vbox.prop(self, "view_pan")
+        if self.view_pan:
+            vbox.label(text="Orbit is replaced by pan in Top / Front / Side views.", icon='INFO')
         if self.mouse_orbit == 'DEFAULT':       # sinon le bouton d'orbite choisi plus haut (style Rhino...) s'applique partout
             row = vbox.row()
             row.enabled = self.view_pan

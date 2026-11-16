@@ -63,6 +63,39 @@ installing an extension ZIP over this development link could overwrite source
 files. To return to the installed release, disable Wanderer, remove only the
 symbolic link, restore the backed-up directory, and enable Wanderer again.
 
+## Blender orbit after switching views
+
+The upstream default enabled `view_pan` even with Navigation style set to
+Blender. `navigation.start_navigation()` deliberately sends the orbit button
+to Blender's pan operator in aligned orthographic views. This explains why MMB
+orbits in perspective but pans immediately after choosing Top, Front or Side.
+Leaving the axis-aligned view stops that override; it is not a stuck mouse.
+
+Our default leaves `view_pan` off. Selecting Blender navigation also clears a
+previously saved pan override. Selecting Rhino enables side-view panning, and
+Custom preserves the chosen setting. The checkbox remains available to opt in,
+with a visible explanation when enabled. Existing saved preferences are not
+silently migrated: select Blender again, or turn off **Pan in orthographic side
+views**, then save preferences. This correction was applied to the development
+Blender session through MCP.
+
+Normal Blender navigation remains MMB orbit, Shift+MMB pan and Ctrl+MMB zoom
+(the inspected Mac keymap also accepts Command+MMB for zoom). No replacement
+orbit implementation or changes to named-view storage are needed.
+
+Focused regression checks:
+
+```sh
+blender --background --factory-startup --python-exit-code 1 --python tests/t_navigation.py
+blender --factory-startup --enable-event-simulate --python tests/t_navigation_mouse.py
+```
+
+The second command opens and closes a disposable Blender window. It reproduces
+the old Top-view pan, tests real MMB drags from all six axis views, then checks
+Shift pan and Ctrl/Command zoom. Require `PASS navigation mouse suite` in its
+output. Both suites preserve scene objects; never run them in a working session.
+The theme-reset suite remains a separate regression check.
+
 ## Test safely
 
 Run the integration suite in a **separate background Blender process**:

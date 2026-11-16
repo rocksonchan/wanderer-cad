@@ -738,7 +738,10 @@ def _update_view_keymap(self=None, context=None):
 def _update_nav_style(self, context):
     """Un style règle le bouton d'orbite (Rhino) ou ajoute ses propres raccourcis ; « Custom » ne touche à rien."""
     style = self.nav_style
+    if style == 'BLENDER':
+        self.view_pan = False    # also clear an override saved by an older installation
     if style == 'RHINO':
+        self.view_pan = True
         self.mouse_orbit = 'RIGHT'
         self.mouse_menu = 'RIGHT_CLICK'
         return
