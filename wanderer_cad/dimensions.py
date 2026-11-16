@@ -231,10 +231,10 @@ class DESSIN_OT_cotation(DessinBase):
         super().cleanup(context)
 
 
-def fit_circle_points(P):
+def fit_circle_points(P, min_pts=6):
     """Cercle / arc passant par les points ordonnés P (n,3) : (c, r, n, e1, e2) ou None si ce n'est pas un cercle."""
     P = np.asarray(P, dtype=np.float64)
-    if len(P) < 6:
+    if len(P) < min_pts:
         return None
     c0 = P.mean(axis=0)
     _u, sv, vt = np.linalg.svd(P - c0, full_matrices=False)
@@ -326,6 +326,101 @@ def edge_chain_circle(edges, adj, e0, cos_min=0.55, limit=20000):
         return None
     P = np.array(pts)
     fit = fit_circle_points(P)
+    if fit is None:
+        return None
+    c, r, n, e1, e2 = fit
+    steps = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    return (c, r, n, e1, e2, P, max(2.0 * float(np.median(steps)), 1e-6))
+
+
+def _joint_rho(a, p, b):
+    """Rayon local au sommet p d'une suite ordonnée a-p-b : (demi-somme des segments) / angle de virage, et normale du
+    virage. (inf, None) si le virage est nul ou trop vif pour un arc échantillonné."""
+    u, w = p - a, b - p
+    lu, lw = float(np.linalg.norm(u)), float(np.linalg.norm(w))
+    if lu < 1e-12 or lw < 1e-12:
+        return math.inf, None
+    cr = np.cross(u, w)
+    s = float(np.linalg.norm(cr))
+    th = math.atan2(s, float(u @ w))
+    if th < 1e-4 or th > math.radians(30.0):
+        return math.inf, None
+    return 0.5 * (lu + lw) / th, cr / s
+
+
+def edge_chain_arc(edges, adj, e0, tol=0.03, brk=1.5, cos_min=0.55, limit=20000):
+    """Congé (fillet) : arc seul autour de l'arête e0, quand il se raccorde en tangence à des droites (polyligne arrondie,
+    courbe de Bézier, contour de maillage). Contrairement à edge_chain_circle, la suite s'arrête dès que le rayon local
+    change (droite tangente, angle vif, autre congé). Chaque bout doit être une rupture nette (fin de la courbe, droite,
+    angle vif, virage inversé ou rayon changé de plus de `brk` fois) : une courbe lisse quelconque (ellipse, spline), dont
+    le rayon dérive peu à peu, n'est pas un congé. Retourne le même tuple que edge_chain_circle, ou None."""
+    def key(pt):
+        return (round(pt[0] * 1e5), round(pt[1] * 1e5), round(pt[2] * 1e5))
+
+    seen = {e0}
+
+    def nxt_edge(cur, cend):
+        tip, tail = edges[cur][cend], edges[cur][1 - cend]
+        d_in = tip - tail
+        ln = np.linalg.norm(d_in)
+        if ln < 1e-12:
+            return None
+        d_in = d_in / ln
+        best, best_dot = None, cos_min
+        for (e, ei) in adj.get(key(tip), ()):
+            if e in seen:
+                continue
+            d_out = edges[e][1 - ei] - tip
+            lo = np.linalg.norm(d_out)
+            if lo < 1e-12:
+                continue
+            dot = float(d_in @ d_out) / lo
+            if dot > best_dot:
+                best, best_dot = (e, ei), dot
+        return best
+
+    # rayon de référence : le virage le plus serré aux deux bouts de e0 (l'autre bout peut être le point de tangence)
+    first = {}
+    for end in (1, 0):
+        b = nxt_edge(e0, end)
+        if b is None:
+            continue
+        tip, tail, far = edges[e0][end], edges[e0][1 - end], edges[b[0]][1 - b[1]]
+        rho, nrm = _joint_rho(tail, tip, far) if end == 1 else _joint_rho(far, tip, tail)
+        if nrm is not None:
+            first[end] = (rho, nrm)
+    if not first:
+        return None
+    rho0, n0 = min(first.values(), key=lambda t: t[0])
+
+    pts = [edges[e0][0], edges[e0][1]]
+    joints = 0
+    for end in (1, 0):
+        cur, cend = e0, end
+        for _ in range(limit):
+            b = nxt_edge(cur, cend)
+            if b is None:
+                break
+            e, ei = b
+            tip, tail, far = edges[cur][cend], edges[cur][1 - cend], edges[e][1 - ei]
+            rho, nrm = _joint_rho(tail, tip, far) if end == 1 else _joint_rho(far, tip, tail)
+            if nrm is None or float(nrm @ n0) < 0.9:
+                break                               # droite tangente, angle vif ou virage inversé : rupture nette
+            if abs(rho - rho0) > tol * rho0:
+                if rho0 / brk < rho < rho0 * brk:
+                    return None                     # le rayon dérive : courbe lisse, pas un congé
+                break
+            seen.add(e)
+            joints += 1
+            if end == 1:
+                pts.append(far)
+            else:
+                pts.insert(0, far)
+            cur, cend = e, 1 - ei
+    if joints < 2:          # au moins trois segments réguliers : deux segments seuls ne font pas un arc
+        return None
+    P = np.array(pts)
+    fit = fit_circle_points(P, min_pts=4)
     if fit is None:
         return None
     c, r, n, e1, e2 = fit
@@ -440,7 +535,8 @@ class DESSIN_OT_cotation_rayon(DessinBase):
             self._edge_cache = cache
         _e, adj, found = cache
         if e0 not in found:
-            found[e0] = edge_chain_circle(edges, adj, e0)
+            # cercle / arc entier d'abord (comportement d'origine) ; sinon congé raccordé à des droites (DimRadius de Rhino)
+            found[e0] = edge_chain_circle(edges, adj, e0) or edge_chain_arc(edges, adj, e0)
         return found[e0]
 
     def geometry(self, info, q):
