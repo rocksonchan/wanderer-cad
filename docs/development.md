@@ -98,6 +98,31 @@ Shift pan and Ctrl/Command zoom. Require `PASS navigation mouse suite` in its
 output. Both suites preserve scene objects; never run them in a working session.
 The theme-reset suite remains a separate regression check.
 
+## Radius dimension on fillet corners
+
+Branch `codex/fillet-radius-dim` (16 November 2026). Like Rhino's DimRadius,
+**Radius / Diameter** now measures a fillet: the arc inside a polyline, a
+Bézier curve or a mesh outline, tangent to the lines on both sides.
+
+Before, the tool followed the clicked edge into the tangent lines and tried to
+fit one circle through line, arc and line, which failed ("No circle or arc
+under the cursor"). `dimensions.edge_chain_arc()` is a fallback, used only when
+the original `edge_chain_circle()` finds nothing, so whole circles and arcs
+behave as before. It walks out from the clicked edge while each joint's local
+radius (half the two segment lengths divided by the turn angle) stays within 3%
+of the clicked one, then fits a circle to that stretch alone. Both ends must be
+a clean break: end of the curve, a straight or sharp joint, a reversed turn, or
+a radius jump of more than 1.5 times. A gradual drift means a smooth curve
+(ellipse, spline), which gives no radius, as before. At least three regular
+segments are required. The change is limited to `dimensions.py`
+(`fit_circle_points` gained an optional `min_pts`, default unchanged).
+
+Regression check: `tests/t_filletdim.py` covers an L corner, a closed rounded
+rectangle, a Bézier corner, a mesh outline, a fillet next to a sharp corner,
+and the negatives (sharp polyline, ellipse, sine wave), plus an unchanged mesh
+circle. `t_edgecirc`, `t_dimold`, `t_prec4`, `t_undo4` and `t_layout` pass
+before and after.
+
 ## Test safely
 
 Run the integration suite in a **separate background Blender process**:
