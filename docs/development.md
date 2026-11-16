@@ -123,6 +123,27 @@ and the negatives (sharp polyline, ellipse, sine wave), plus an unchanged mesh
 circle. `t_edgecirc`, `t_dimold`, `t_prec4`, `t_undo4` and `t_layout` pass
 before and after.
 
+## Snapping in CPlane 3 points and Vertical
+
+Branch `codex/cplane-3pt-snap` (16 November 2026). **CPlane** is a plain
+operator, not a `DessinBase` tool, so its 3-point (3) and Vertical (V) picks
+only found a corner of the mesh face under the cursor (`cp_pick`) and otherwise
+dropped the point on the current plane. Curve ends, midpoints, centres and
+intersections were never snapped.
+
+`DESSIN_OT_cplane.pick()` now asks Wanderer's object snaps first, the way
+PushPull and the Gumball do: `collect_snap_points` once per command, then
+`find_snap_in` (it follows the OSnap panel, and Disable turns it off), with the
+last picked point as the Perp / Tan reference. If nothing is snapped it falls
+back to `cp_pick` unchanged. The snapped point keeps its own height: it is not
+projected onto the current plane, since it defines the new one. The usual snap
+marker is drawn (`cp_snap_px_cb`). The change is limited to `cplane.py`.
+
+Regression check: `tests/t_cplanesnap.py` (End / Mid / End on a raised curve,
+Vertical on two curve ends, OSnap disabled, mesh face corners as before).
+`t_prec6`, `t_autocp`, `t_compactbar` and `t_stressvar cplane` pass before and
+after; `t_newcmds` keeps its two known baseline failures, unchanged.
+
 ## Test safely
 
 Run the integration suite in a **separate background Blender process**:

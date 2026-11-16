@@ -13,8 +13,10 @@ from .core import (
     plane_origin, pref, tr_text,
 )
 from .drawing import (
-    _same_region, find_window_region, get_shader, main_window_region, project_px, px_scale, region_rv3d,
+    _same_region, draw_snap_marker, find_snap_in, find_window_region, get_shader, main_window_region, project_px,
+    px_scale, region_rv3d,
 )
+from .snapping import collect_snap_points
 from .selection import BOX_BLUE, BOX_ORANGE, ray_cast_opaque
 from .toolbar import _SUBD_EDIT_LIST, _SUBD_OBJ_LIST
 from .views import _CMD
@@ -304,6 +306,13 @@ def cp_pick_cb(op):
     gpu.state.blend_set('NONE')
 
 
+def cp_snap_px_cb(op):
+    """Repère d'accrochage (End, Mid, Cen...) du point visé par CPlane 3 points / Vertical."""
+    if not _same_region(op) or getattr(op, "snap_screen", None) is None:
+        return
+    draw_snap_marker(op.snap_screen[0], op.snap_screen[1], op.snap_kind)
+
+
 class DESSIN_OT_cplane(bpy.types.Operator):
     bl_idname = "dessin.cplane"
     bl_label = "CPlane"
@@ -334,15 +343,41 @@ class DESSIN_OT_cplane(bpy.types.Operator):
         self.rv3d = region_rv3d(self.region, self.area)
         self.pts = []
         self.hover = None
+        self._snapd = None
+        self.snap_screen = None
+        self.snap_kind = None
         self._h = bpy.types.SpaceView3D.draw_handler_add(cp_pick_cb, (self,), 'WINDOW', 'POST_VIEW')
+        self._hpx = bpy.types.SpaceView3D.draw_handler_add(cp_snap_px_cb, (self,), 'WINDOW', 'POST_PIXEL')
         self.prompt()
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def pick(self, context, region, mx, my):
+        """Point visé (3 points / Vertical) : accrochage d'objet (End, Mid, Cen, Int..., selon le panneau OSnap) comme les
+        outils de dessin, sinon cp_pick (coin de la face visée, face, plan courant). Le point accroché garde sa hauteur :
+        il n'est pas projeté sur le plan courant, c'est lui qui définit le nouveau plan."""
+        self.snap_screen = None
+        self.snap_kind = None
+        try:
+            if self._snapd is None:
+                self._snapd = collect_snap_points(context, None)
+            hit = find_snap_in(self._snapd, mx, my, region, self.rv3d, ref=self.pts[-1] if self.pts else None)
+        except (RuntimeError, ReferenceError, AttributeError, ValueError, TypeError):
+            hit = None
+        if hit is not None:
+            self.snap_screen = (float(hit[1][0]), float(hit[1][1]))
+            self.snap_kind = hit[2]
+            return Vector(hit[0])
+        p, _hit = cp_pick(context, region, self.rv3d, mx, my)
+        return p
 
     def cleanup(self):
         if getattr(self, "_h", None) is not None:
             bpy.types.SpaceView3D.draw_handler_remove(self._h, 'WINDOW')
             self._h = None
+        if getattr(self, "_hpx", None) is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self._hpx, 'WINDOW')
+            self._hpx = None
         set_prompt(self.area, None)
         try:
             self.area.tag_redraw()
@@ -388,6 +423,7 @@ class DESSIN_OT_cplane(bpy.types.Operator):
                 return {'FINISHED'}
             self.mode = {'THREE': '3PT', 'V': 'VERT', 'O': 'OBJECT'}[event.type]
             self.pts = []
+            self.snap_screen = None
             self.prompt()
             return {'RUNNING_MODAL'}
         region = find_window_region(self.area, event.mouse_x, event.mouse_y)
@@ -396,7 +432,7 @@ class DESSIN_OT_cplane(bpy.types.Operator):
         mx, my = event.mouse_x - region.x, event.mouse_y - region.y
         if event.type == 'MOUSEMOVE':
             if self.mode != 'OBJECT':
-                self.hover, _hit = cp_pick(context, region, self.rv3d, mx, my)
+                self.hover = self.pick(context, region, mx, my)
                 self.area.tag_redraw()
             return {'RUNNING_MODAL'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -407,7 +443,7 @@ class DESSIN_OT_cplane(bpy.types.Operator):
                     cmd_log("CPlane: click on a face (or press 3 / V)")
                     return {'RUNNING_MODAL'}
                 return self.done(context, fr, "CPlane: aligned with the face")
-            p, _hit = cp_pick(context, region, self.rv3d, mx, my)
+            p = self.pick(context, region, mx, my)
             if p is None:
                 return {'RUNNING_MODAL'}
             self.pts.append(p.copy())
