@@ -37,6 +37,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     module = addon_utils.enable('wanderer_cad', default_set=True)
     assert module is not None
+    from wanderer_cad import preferences as theme_module
     prefs = bpy.context.preferences.addons['wanderer_cad'].preferences
     prefs.snap_budget = 7.0
     prefs.enter_last = False
@@ -44,11 +45,12 @@ def main():
     before_keymaps = [(km.name, len(km.keymap_items)) for km in bpy.context.window_manager.keyconfigs.addon.keymaps]
     bpy.ops.preferences.reset_default_theme()
     default = theme_values(bpy.context.preferences.themes[0])
-    for theme in ('BLUEPRINT', 'VELLUM', 'GHOST'):
+    assert {key for key, _ in theme_module.THEME_NAMES} == {
+        'BLUEPRINT', 'VELLUM', 'CARBON', 'MIDNIGHT', 'GRAPHITE', 'IVORY'}
+    for theme, _ in theme_module.THEME_NAMES:
         assert bpy.ops.dessin.install_theme(which=theme) == {'FINISHED'}
         assert theme_values(bpy.context.preferences.themes[0]) != default
-        if theme == 'GHOST':
-            assert prefs.icon_palette == 'TARGET'
+        prefs.icon_palette = 'TARGET'
         assert bpy.ops.dessin.theme_reset() == {'FINISHED'}
         assert theme_values(bpy.context.preferences.themes[0]) == default, theme
         assert prefs.icon_palette == 'EARTH'
@@ -58,6 +60,22 @@ def main():
         assert bpy.ops.dessin.theme_reset() == {'FINISHED'}
         assert theme_values(bpy.context.preferences.themes[0]) == default
         print('PASS', theme, 'full theme reset, icons, repeat reset, settings, objects and keymaps')
+    # Upstream's restore-previous-theme and our factory reset must coexist.
+    bpy.context.preferences.themes[0].user_interface.wcol_regular.inner = (0.125, 0.25, 0.5, 1.0)
+    custom_signature = theme_module._theme_signature(bpy.context)
+    assert custom_signature is not None
+    assert bpy.ops.dessin.install_theme(which='BLUEPRINT') == {'FINISHED'}
+    backup = Path(theme_module.theme_backup_path()).read_bytes()
+    assert bpy.ops.dessin.install_theme(which='CARBON') == {'FINISHED'}
+    assert Path(theme_module.theme_backup_path()).read_bytes() == backup
+    assert bpy.ops.dessin.theme_reset() == {'FINISHED'}
+    assert theme_values(bpy.context.preferences.themes[0]) == default
+    assert Path(theme_module.theme_backup_path()).read_bytes() == backup
+    assert bpy.ops.dessin.restore_theme() == {'FINISHED'}
+    assert theme_module._theme_signature(bpy.context) == custom_signature
+    assert bpy.ops.dessin.theme_reset() == {'FINISHED'}
+    assert theme_values(bpy.context.preferences.themes[0]) == default
+    print('PASS previous-theme backup survives switching themes and factory reset')
     addon_utils.disable('wanderer_cad', default_set=False)
     print('PASS theme reset suite')
 

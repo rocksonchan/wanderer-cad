@@ -8,6 +8,7 @@
 
 Each suite runs in its own Python process with Blender's `bpy` module, drives the tools with simulated mouse and
 keyboard events and measures the result (coordinates, volumes, undo / redo states, timings).
+The GUI-only t_navigation_mouse.py is run separately with --enable-event-simulate.
 The add-on source tested is wanderer_cad/__init__.py (or the file named by the WANDERER_SRC environment variable).
 Exit code 0 when every suite passes.
 """
@@ -20,7 +21,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "tests")
-LIBS = {"harness.py", "prec_lib.py", "undo_lib.py", "t_one.py"}
+LIBS = {"harness.py", "prec_lib.py", "undo_lib.py", "t_one.py", "t_navigation_mouse.py"}
 BENCH = {"t_rt.py"}
 VARIANTS = {"t_stressvar.py": ("units", "imperial", "xform", "persp", "cplane", "heavy")}
 FAIL_LINE = re.compile(r"^(BAD|EXC|FAIL|NOUNDO|UNDO≠|REDO≠|SUIVI|FUITE|Traceback)")

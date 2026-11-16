@@ -3,6 +3,7 @@
     blender --background --factory-startup --python-exit-code 1 --python tests/t_navigation.py
 """
 from pathlib import Path
+import runpy
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -18,6 +19,7 @@ def main():
     assert addon_utils.enable('wanderer_cad', default_set=True) is not None
     from wanderer_cad import navigation as nav
     from wanderer_cad.core import PREF_DEFAULTS
+    from wanderer_cad.preferences import apply_workflow_preset
 
     prefs = bpy.context.preferences.addons['wanderer_cad'].preferences
     assert prefs.nav_style == 'BLENDER'
@@ -76,12 +78,25 @@ def main():
             assert not nav._VIEW_KEYMAPS, 'Stale navigation overrides after style change'
         print('PASS repeated Rhino / Blender switching without stale bindings')
 
+        apply_workflow_preset(prefs, 'RHINO')
+        assert prefs.view_pan and prefs.mouse_orbit == 'RIGHT'
+        apply_workflow_preset(prefs, 'BLENDER')
+        assert not prefs.view_pan and not nav._VIEW_KEYMAPS
+        print('PASS upstream workflow presets preserve the Blender orbit fix')
+
         prefs.view_pan = True
         prefs.nav_style = 'CUSTOM'
         assert prefs.view_pan is True, 'Custom style must preserve explicit choices'
         prefs.nav_style = 'BLENDER'
         assert not nav._VIEW_KEYMAPS
     assert [(o.name, o.as_pointer()) for o in bpy.data.objects] == before_objects
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/reload_addon.py'), run_name='__main__')
+    assert bpy.context.preferences.addons['wanderer_cad'].preferences.view_pan is False
+    assert not sys.modules['wanderer_cad.navigation']._VIEW_KEYMAPS
+    assert bpy.ops.dessin.theme_reset.get_rna_type()
+    assert bpy.ops.dessin.restore_theme.get_rna_type()
+    assert [(o.name, o.as_pointer()) for o in bpy.data.objects] == before_objects
+    print('PASS development reload retains both theme actions and native navigation')
     addon_utils.disable('wanderer_cad', default_set=False)
     print('PASS navigation suite; scene objects preserved')
 

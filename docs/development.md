@@ -2,9 +2,10 @@
 
 ## First change: reset appearance
 
-`codex/theme-reset` adds **Reset to Blender Default** under the three theme
-buttons in Wanderer's Appearance preferences. It uses Blender's own theme reset
-and restores Wanderer's default toolbar icon palette, including after Ghost.
+`codex/theme-reset` adds **Reset to Blender Default** in Wanderer's Appearance
+preferences. It uses Blender's own theme reset and restores Wanderer's default
+toolbar icon palette. As of upstream 2.96.127, it sits alongside the six theme
+buttons and the author's separate **Restore my previous theme** action.
 It keeps other Wanderer settings and keyboard shortcuts. It follows Blender's
 normal preference-saving setting; it does not force-save all preferences.
 
@@ -14,7 +15,8 @@ The runtime change is limited to `preferences.py` and operator registration in
 ## Version and Git history
 
 Keep `bl_info.version`, `blender_manifest.toml` and the extension ID unchanged
-for these personal development changes. The base version is **2.96.126**.
+for personal changes. When bringing in a release, adopt the author's version
+unchanged: the current upstream base is **2.96.127** (previously 2.96.126).
 Use the branch and Git commit hash to identify a custom build. The official
 upstream changelog is left alone; personal development notes live here.
 
@@ -104,17 +106,43 @@ Run the integration suite in a **separate background Blender process**:
 blender --background --factory-startup --python-exit-code 1 --python tests/t_theme_reset.py
 ```
 
-It applies Blueprint, Vellum and Ghost; compares all readable theme values
+It applies Blueprint, Carbon, Midnight, Graphite, Vellum and Ivory; compares all readable theme values
 against Blender's factory theme; checks the icon palette and repeated resets;
 and verifies other sample settings, objects and shortcut counts are preserved.
 It refuses to run in an interactive working session. It can also run through
 the repository's existing `python scripts/run_tests.py theme_reset` with `bpy`.
+It also checks that the author's previous-theme backup survives a factory reset
+and can still be restored. For isolated tests, set `BLENDER_USER_RESOURCES`
+(and any `BLENDER_USER_CONFIG` / `SCRIPTS` / `EXTENSIONS` overrides) to temporary
+directories so theme and alias files cannot overwrite the working installation.
 
 The other upstream suites may reset scenes. Do not run those suites inside a
 working Blender session. Live MCP checks should be narrowly scoped to the
 feature, with current scene and preferences preserved as appropriate.
 
 ## Bring in author updates
+
+### Update on 16 November 2026
+
+Merged upstream `05a534e` (2.96.127) into the personal history based on `a57d591`.
+Integration was prepared in a separate Git worktree, leaving the linked Blender
+checkout untouched during testing. Conflicts were limited to `preferences.py`
+and `registration.py`: retained upstream's reorganized preference panels, six
+themes, previous-theme restoration and new operators, then placed our factory
+theme reset in Appearance and registered it alongside the upstream operators.
+The default and Blender-style orbit correction remain in `core.py`,
+`navigation.py` and `preferences.py`. Ghost was replaced by Carbon upstream;
+the reset tests now cover all six current themes.
+
+Validation on Blender 5.2.0 LTS: all 16 targeted suites passed (the 13 upstream
+suites added or changed in this release, plus theme reset, navigation and real
+mouse-event checks). This is not a run of the entire upstream suite. The Blend
+Surface test needed a macOS-only harness correction: read state from the tool's
+owning module instead of `invoke.__globals__`, since registration wraps `invoke`
+on macOS. Its geometry assertions remain unchanged. The background test runner
+now excludes the GUI-only mouse test, which is run separately.
+
+### Next update
 
 Save work and commit it first. Fetching downloads the author's commits without
 changing the working files. Start an update branch from our current `main`,
