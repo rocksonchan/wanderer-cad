@@ -149,6 +149,7 @@ class DESSIN_OT_clip_plane(DessinBase):
                       "on the side the arrow points to (move it with the gumball; flip it or switch it off in the Wanderer panel). Works in Solid and Wireframe shading only")
 
     TITLE = "Clipping Plane"
+    CORNER_STAGES = (1,)
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2

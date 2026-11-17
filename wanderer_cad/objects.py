@@ -33,6 +33,34 @@ def group_members(root):
     return out
 
 
+def group_click(context, hit, mode):
+    """Clic sur un objet d'un groupe : tout le groupe suit, tant qu'il n'est pas dégroupé (Rhino).
+    mode : 'SET' (clic : le groupe seul), 'ADD_TOGGLE' (Maj : le groupe suit l'état de l'objet cliqué), 'REMOVE' (Ctrl)."""
+    try:
+        st = context.scene.dessin
+        if context.mode != 'OBJECT' or not st.group_select or hit is None:
+            return False
+        root = group_root(hit)
+    except (AttributeError, ReferenceError):
+        return False
+    if root is None:
+        return False
+    on = mode == 'SET' or (mode == 'ADD_TOGGLE' and hit.select_get())
+    for o in group_members(root):
+        try:
+            if o.visible_get():
+                o.select_set(on)
+        except RuntimeError:
+            pass
+    if on:
+        try:
+            context.view_layer.objects.active = hit
+        except (AttributeError, ReferenceError):
+            pass
+    _GROUP_SEL["last"] = {o.name for o in context.selected_objects}
+    return True
+
+
 class DESSIN_OT_group(bpy.types.Operator):
     bl_idname = "dessin.group"
     bl_label = "Group"
@@ -408,7 +436,164 @@ class DESSIN_MT_ctx_polyline(bpy.types.Menu):
         layout.operator(DESSIN_OT_poly_edit.bl_idname, text="Decurve").action = 'DECURVE'
 
 
+# ---- Lock / Unlock All / Unlock Selected (Rhino ; Freeze / Unfreeze dans 3ds Max) ----
+# Un objet verrouillé reste visible et accrochable, mais ne se sélectionne plus (ni clic, ni fenêtre) et n'est jamais
+# modifié par les commandes (Trim, Split...). Seuls les objets verrouillés par Lock portent la marque : les verrous posés
+# par Wanderer lui-même (cadres de mise en page...) ne sont jamais levés par Unlock All.
+LOCK_KEY = "cad_locked"
+
+
+def locked_objects(context):
+    try:
+        return [o for o in context.scene.objects if o.get(LOCK_KEY)]
+    except (AttributeError, ReferenceError):
+        return []
+
+
+def object_lock(o, on):
+    try:
+        if on:
+            o.select_set(False)
+            o.hide_select = True
+            o[LOCK_KEY] = 1
+        else:
+            o.hide_select = False
+            if LOCK_KEY in o:
+                del o[LOCK_KEY]
+    except (RuntimeError, ReferenceError, AttributeError):
+        pass
+
+
+class DESSIN_OT_lock(bpy.types.Operator):
+    bl_idname = "dessin.lock"
+    bl_label = "Lock"
+    bl_description = ("Lock the selected objects, like Rhino (Freeze in 3ds Max): they stay visible and you can still snap to "
+                      "them, but they can no longer be selected or changed. Unlock All or Unlock Selected to free them")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and bool(context.selected_objects)
+
+    def execute(self, context):
+        objs = list(context.selected_objects)
+        for o in objs:
+            object_lock(o, True)
+        self.report({'INFO'}, f"{len(objs)} object(s) locked")
+        return {'FINISHED'}
+
+
+class DESSIN_OT_unlock_all(bpy.types.Operator):
+    bl_idname = "dessin.unlock_all"
+    bl_label = "Unlock All"
+    bl_description = "Unlock every locked object (Unfreeze All in 3ds Max); they become selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and bool(locked_objects(context))
+
+    def execute(self, context):
+        objs = locked_objects(context)
+        for o in context.selected_objects:
+            o.select_set(False)
+        for o in objs:
+            object_lock(o, False)
+            try:
+                o.select_set(True)
+            except RuntimeError:
+                pass
+        self.report({'INFO'}, f"{len(objs)} object(s) unlocked")
+        return {'FINISHED'}
+
+
+class DESSIN_OT_unlock_selected(bpy.types.Operator):
+    """Les objets verrouillés redeviennent cliquables le temps de la commande : on choisit ceux à libérer, Entrée valide."""
+    bl_idname = "dessin.unlock_selected"
+    bl_label = "Unlock Selected"
+    bl_description = "Click the locked objects you want to unlock, then Enter (Esc: cancel). The others stay locked"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    PROMPT = "Select locked objects to unlock   |   Enter: unlock them   Esc: cancel"
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and bool(locked_objects(context))
+
+    def invoke(self, context, event):
+        self.cands = [o.name for o in locked_objects(context)]
+        if not self.cands or context.area is None:
+            return {'CANCELLED'}
+        self.area = context.area
+        self.before = [o.name for o in context.selected_objects]
+        self.active = context.view_layer.objects.active.name if context.view_layer.objects.active else None
+        for o in context.selected_objects:
+            o.select_set(False)
+        for o in self.objs():
+            o.hide_select = False            # cliquables le temps de la commande (la marque reste)
+        self.prompt(self.PROMPT)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def objs(self):
+        return [o for o in (bpy.data.objects.get(n) for n in self.cands) if o is not None]
+
+    def prompt(self, txt):
+        from .cplane import set_prompt
+        try:
+            set_prompt(self.area, txt)
+            self.area.tag_redraw()
+        except (AttributeError, ReferenceError):
+            pass
+
+    def end(self, context, keep):
+        """keep : objets libérés ; les autres reprennent leur verrou."""
+        for o in self.objs():
+            if o in keep:
+                object_lock(o, False)
+            else:
+                object_lock(o, True)
+        self.prompt(None)
+
+    def modal(self, context, event):
+        et = event.type
+        if event.value == 'PRESS' and et == 'ESC':
+            self.end(context, ())
+            for n in self.before:
+                o = bpy.data.objects.get(n)
+                if o is not None:
+                    try:
+                        o.select_set(True)
+                    except RuntimeError:
+                        pass
+            return {'CANCELLED'}
+        if event.value == 'PRESS' and et in {'RET', 'NUMPAD_ENTER', 'SPACE'}:
+            picked = [o for o in self.objs() if o.select_get()]
+            self.end(context, picked)
+            for o in picked:
+                o.select_set(True)
+            if picked:
+                context.view_layer.objects.active = picked[-1]
+            self.report({'INFO'}, f"{len(picked)} object(s) unlocked")
+            return {'FINISHED'}
+        if et == 'LEFTMOUSE' and event.value == 'PRESS':
+            from .drawing import find_window_region
+            region = find_window_region(self.area, event.mouse_x, event.mouse_y)
+            if region is None:
+                return {'PASS_THROUGH'}
+            from .selection import pick_object_at
+            hit = pick_object_at(context, self.area, region, event.mouse_x - region.x, event.mouse_y - region.y)
+            obj = hit[0] if hit else None
+            if obj is not None and obj.name in self.cands:
+                obj.select_set(not obj.select_get())        # un deuxième clic le retire du choix
+                self.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        return {'PASS_THROUGH'}       # navigation, molette...
+
+
 def ctx_extra_items(layout, context):
+    # ordre : Select, Display As, Material, puis Lock / Unlock
+    layout.menu(DESSIN_MT_ctx_select.bl_idname, icon='RESTRICT_SELECT_OFF')
     if context.mode == 'OBJECT' and any(o.type in {'CAMERA', 'LIGHT'} for o in context.selected_objects):
         layout.operator(DESSIN_OT_track_to.bl_idname, text="Track To (aim at active object)", icon='TRACKER')
         layout.operator(DESSIN_OT_track_to.bl_idname, text="Clear Track To", icon='X').clear = True
@@ -416,7 +601,24 @@ def ctx_extra_items(layout, context):
         if context.selected_objects:
             layout.menu(DESSIN_MT_ctx_display.bl_idname, icon='SHADING_WIRE')      # Display As : Bounds / Wire / Solid / Textured
         layout.menu(DESSIN_MT_ctx_material.bl_idname, icon='MATERIAL')
-    layout.menu(DESSIN_MT_ctx_select.bl_idname, icon='RESTRICT_SELECT_OFF')
+        # verrou : Lock sur la sélection ; Unlock All / Unlock Selected dès qu'un objet est verrouillé (même sans sélection)
+        if context.selected_objects:
+            layout.operator(DESSIN_OT_lock.bl_idname, icon='LOCKED')
+        if locked_objects(context):
+            layout.operator(DESSIN_OT_unlock_all.bl_idname, icon='UNLOCKED')
+            layout.operator(DESSIN_OT_unlock_selected.bl_idname, icon='RESTRICT_SELECT_OFF')
+        # Isolate (ne garder que la sélection) et Show All (réafficher les objets masqués)
+        from .core import tr_label
+        if context.selected_objects:
+            layout.operator("object.hide_view_set", text=tr_label("Isolate"), icon='HIDE_OFF').unselected = True
+        # Local View (Blender, touche /) juste sous Isolate : « Quit Local View » quand on y est déjà
+        in_local = getattr(getattr(context, "space_data", None), "local_view", None) is not None
+        if in_local:
+            layout.operator("view3d.localview", text=tr_label("Quit Local View"), icon='VIEW_PERSPECTIVE')
+        elif context.selected_objects:
+            layout.operator("view3d.localview", text=tr_label("Local View"), icon='VIEW_PERSPECTIVE')
+        if any(o.hide_get() for o in context.view_layer.objects):
+            layout.operator("object.hide_view_clear", text=tr_label("Show All"), icon='HIDE_OFF')
 
 
 def menu_ctx_extra(self, context):
@@ -426,7 +628,8 @@ def menu_ctx_extra(self, context):
 
 
 class _CopyHookLayout:
-    """Enveloppe du layout du clic droit : nos menus s'insèrent juste avant « Copy Objects »."""
+    """Enveloppe du layout du clic droit : nos menus s'insèrent juste avant « Copy Objects » (en mode objet ils sont déjà
+    en haut du menu : rien n'est ajouté ici)."""
 
     def __init__(self, layout, context, state):
         object.__setattr__(self, "_layout", layout)
@@ -475,6 +678,10 @@ def install_ctx_object_menu():
         if context.mode == 'OBJECT' and any(o.type == 'CURVE' for o in context.selected_objects):
             self.layout.menu(DESSIN_MT_ctx_polyline.bl_idname, icon='CURVE_DATA')      # « Polyline » tout en haut du menu
             self.layout.separator()
+        if context.mode == 'OBJECT':          # Select, Display As, Material, Lock : en haut, avant Shade Smooth
+            ctx_extra_items(self.layout, context)
+            self.layout.separator()
+            state["done"] = True
         proxy = _CopyHookLayout(self.layout, context, state)
         orig(_MenuSelf(self, proxy), context)
         if not state["done"]:                  # « Copy Objects » introuvable (autre version de Blender) : à la fin

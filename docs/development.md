@@ -1,29 +1,25 @@
 # Developing the personal version
 
-## First change: reset appearance
+## Retired: reset appearance (2026-11-14 to 2026-11-17)
 
-`codex/theme-reset` adds **Reset to Blender Default** in Wanderer's Appearance
-preferences. It uses Blender's own theme reset and restores Wanderer's default
-toolbar icon palette. As of upstream 2.96.127, it sits alongside the six theme
-buttons and the author's separate **Restore my previous theme** action.
-It keeps other Wanderer settings and keyboard shortcuts. It follows Blender's
-normal preference-saving setting; it does not force-save all preferences.
-
-The runtime change is limited to `preferences.py` and operator registration in
-`registration.py`. Tests and development helpers are separate files.
+`codex/theme-reset` added **Reset to Blender Default** to Wanderer's Appearance
+preferences. Upstream 2.96.128 removed every theme button from the add-on (the
+themes are now `.xml` files in `themes/`, loaded from Blender's Preferences >
+Themes, which has its own reset). The operator and `tests/t_theme_reset.py` were
+dropped in the 17 November update; both remain in Git history (`718b135`).
 
 ## Version and Git history
 
 Keep `bl_info.version`, `blender_manifest.toml` and the extension ID unchanged
 for personal changes. When bringing in a release, adopt the author's version
-unchanged: the current upstream base is **2.96.127** (previously 2.96.126).
+unchanged: the current upstream base is **2.96.128** (previously 2.96.127).
 Use the branch and Git commit hash to identify a custom build. The official
 upstream changelog is left alone; personal development notes live here.
 
 The original repository is the `upstream` remote. In this checkout its push URL
 is disabled, and `push.default` is `nothing`. `upstream/main` tracks the author's
-baseline after fetching. Our `main` holds the tested personal version, including
-the reset feature, and tracks `origin/main`. The personal fork is
+baseline after fetching. Our `main` holds the tested personal version and
+tracks `origin/main`. The personal fork is
 [rocksonchan/wanderer-cad](https://github.com/rocksonchan/wanderer-cad), connected
 as `origin`. Publish our main branch explicitly:
 
@@ -32,8 +28,7 @@ git push -u origin main
 ```
 
 Start each new feature on a new `codex/` branch from our updated `main`. Test it,
-then merge it into our `main` and push. The original `codex/theme-reset` branch
-is retained as a reference for the first feature.
+then merge it into our `main` and push.
 
 ## Reload without reinstalling
 
@@ -96,32 +91,24 @@ The second command opens and closes a disposable Blender window. It reproduces
 the old Top-view pan, tests real MMB drags from all six axis views, then checks
 Shift pan and Ctrl/Command zoom. Require `PASS navigation mouse suite` in its
 output. Both suites preserve scene objects; never run them in a working session.
-The theme-reset suite remains a separate regression check.
+Note: both suites load this checkout's `wanderer_cad`, not `WANDERER_SRC`.
 
-## Radius dimension on fillet corners
+## Replaced by upstream: radius dimension on fillet corners
 
-Branch `codex/fillet-radius-dim` (16 November 2026). Like Rhino's DimRadius,
-**Radius / Diameter** now measures a fillet: the arc inside a polyline, a
-Bézier curve or a mesh outline, tangent to the lines on both sides.
+Our `codex/fillet-radius-dim` (16 November 2026, `8540b50`) let **Radius /
+Diameter** measure a fillet. Upstream 2.96.128 added the same feature its own
+way (`dimensions.arc_run()`), so the 17 November update took the author's
+`dimensions.py` and dropped ours. `tests/t_filletdim.py` is kept: the author's
+version passes all 9 checks.
 
-Before, the tool followed the clicked edge into the tangent lines and tried to
-fit one circle through line, arc and line, which failed ("No circle or arc
-under the cursor"). `dimensions.edge_chain_arc()` is a fallback, used only when
-the original `edge_chain_circle()` finds nothing, so whole circles and arcs
-behave as before. It walks out from the clicked edge while each joint's local
-radius (half the two segment lengths divided by the turn angle) stays within 3%
-of the clicked one, then fits a circle to that stretch alone. Both ends must be
-a clean break: end of the curve, a straight or sharp joint, a reversed turn, or
-a radius jump of more than 1.5 times. A gradual drift means a smooth curve
-(ellipse, spline), which gives no radius, as before. At least three regular
-segments are required. The change is limited to `dimensions.py`
-(`fit_circle_points` gained an optional `min_pts`, default unchanged).
+## Rectangle tools ignore Ortho for the opposite corner
 
-Regression check: `tests/t_filletdim.py` covers an L corner, a closed rounded
-rectangle, a Bézier corner, a mesh outline, a fillet next to a sharp corner,
-and the negatives (sharp polyline, ellipse, sine wave), plus an unchanged mesh
-circle. `t_edgecirc`, `t_dimold`, `t_prec4`, `t_undo4` and `t_layout` pass
-before and after.
+Our `codex/rect-ortho-diagonal` (17 November 2026, `bbcba85`) let Rectangle,
+Plane, Ellipse: By Corners and Box skip Ortho (F8) / Polar (F10) for the
+opposite corner. Upstream 2.96.128 added the same idea as `CORNER_STAGES = (1,)`
+on Rectangle, Plane and Box, so the update took the author's code. The only
+personal line left is `CORNER_STAGES = (1,)` on `DESSIN_OT_ellipse_coin` in
+`tools_draw.py`. Regression check: `tests/t_rectortho.py` (10 checks).
 
 ## Snapping in CPlane 3 points and Vertical
 
@@ -146,19 +133,13 @@ after; `t_newcmds` keeps its two known baseline failures, unchanged.
 
 ## Test safely
 
-Run the integration suite in a **separate background Blender process**:
+Run each suite in a **separate background Blender process**:
 
 ```sh
-blender --background --factory-startup --python-exit-code 1 --python tests/t_theme_reset.py
+blender --background --factory-startup --python-exit-code 1 --python tests/t_cplanesnap.py
 ```
 
-It applies Blueprint, Carbon, Midnight, Graphite, Vellum and Ivory; compares all readable theme values
-against Blender's factory theme; checks the icon palette and repeated resets;
-and verifies other sample settings, objects and shortcut counts are preserved.
-It refuses to run in an interactive working session. It can also run through
-the repository's existing `python scripts/run_tests.py theme_reset` with `bpy`.
-It also checks that the author's previous-theme backup survives a factory reset
-and can still be restored. For isolated tests, set `BLENDER_USER_RESOURCES`
+For isolated tests, set `BLENDER_USER_RESOURCES`
 (and any `BLENDER_USER_CONFIG` / `SCRIPTS` / `EXTENSIONS` overrides) to temporary
 directories so theme and alias files cannot overwrite the working installation.
 
@@ -167,6 +148,21 @@ working Blender session. Live MCP checks should be narrowly scoped to the
 feature, with current scene and preferences preserved as appropriate.
 
 ## Bring in author updates
+
+### Update on 17 November 2026
+
+Merged upstream `f4601c5` (2.96.128) on `codex/upstream-update-20261117`. The
+author uploaded through GitHub's web page (commits "Delete wanderer_cad
+directory" / "Add files via upload"); Git still merged it normally. Conflicts:
+`base.py`, `core.py`, `layout_engine.py`, `preferences.py`, `registration.py`,
+`tests/t_prefsui.py`. Resolution: take the author's file for all of them, then
+put back only the orbit fix (`view_pan` default off in `core.py` and
+`preferences.py`, with its info label). Also took the author's `dimensions.py`,
+`tools_draw.py` and `solids.py` (fillet radius and rectangle Ortho now upstream).
+Dropped: theme reset and its test, English comment translations (`10fb3e4`).
+Kept, merged cleanly: CPlane snapping (`cplane.py`), orbit fix (`navigation.py`).
+After the update, the add-on differs from upstream in `core.py`, `cplane.py`,
+`navigation.py`, `preferences.py` and one line of `tools_draw.py` only.
 
 ### Update on 16 November 2026
 

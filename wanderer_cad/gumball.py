@@ -5,15 +5,18 @@ import bpy
 import math
 import numpy as np
 import time
-from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+from bpy_extras.view3d_utils import location_3d_to_region_2d, region_2d_to_origin_3d, region_2d_to_vector_3d
 from mathutils import Matrix, Vector, geometry
 
-from .core import AXES3, TAU, _LAST_TYPED, fmt_typed, last_typed, osnap, pref, unit_info
+from .core import (
+    AXES3, TAU, _LAST_TYPED, copy_held, copy_key_name, copy_mod_event, copy_shift, copy_update, fmt_typed, last_typed, lock_held,
+    lock_key_name, osnap, pref, tr_text, unit_info,
+)
 from .snapping import collect_snap_points, curve_edit_apply, curve_edit_selection, edit_selection
 from .drawing import find_snap_in, px_scale
 from .base import DessinBase
 from .subd import (
-    copy_moved_edit, copy_moved_objects, expand_groups, ghost_for_edit, ghost_for_objects, ghost_hide, ghost_show,
+    drag_copy_commit, expand_groups, ghost_for_edit, ghost_for_objects, ghost_hide, ghost_show,
 )
 
 
@@ -80,9 +83,14 @@ def gumball_axes(context):
     return AXES3
 
 
-# Poignées figées pendant qu'on déplace la sélection (comme dans Rhino) : le Gumball reste à sa place de départ pendant le
-# glisser, puis rejoint la sélection au relâchement. Sans cela ses flèches suivaient l'objet à chaque mouvement de souris.
-_GB_DRAG = {"pivot": None, "axes": None, "owner": ""}
+# Pendant qu'on transforme la sélection (comme dans Rhino), le Gumball accompagne l'objet : son centre et ses axes de départ
+# sont gardés ici, et la transformation en cours (« X ») leur est appliquée à chaque dessin. Sans repère de départ figé,
+# il était recalculé depuis la sélection à chaque mouvement de souris (lent, et ses axes sautaient pendant une rotation).
+# Poignée du Gumball sous la souris pendant qu'Alt est maintenu : Blender n'éclaire plus ses poignées avec Alt (Alt + clic
+# ne leur est jamais donné), alors Wanderer l'éclaire lui-même pour qu'on voie ce qu'Alt + glisser va copier.
+_ALT_HOVER = {"area": 0, "handle": None}
+
+_GB_DRAG = {"pivot": None, "axes": None, "owner": "", "X": None, "typing": False}
 
 
 def gumball_freeze(context, pivot, owner):
@@ -91,12 +99,24 @@ def gumball_freeze(context, pivot, owner):
         _GB_DRAG["axes"] = [Vector(a) for a in gumball_axes(context)]
         _GB_DRAG["pivot"] = Vector(pivot)
         _GB_DRAG["owner"] = owner
+        _GB_DRAG["X"] = None
     except (AttributeError, TypeError, ValueError, ReferenceError):
         gumball_unfreeze()
 
 
+def gumball_drag_xform(X):
+    """Transformation appliquée en ce moment à la sélection : le Gumball la suit (déplacement, rotation)."""
+    _GB_DRAG["X"] = None if X is None else X.copy()
+
+
+def gumball_typing():
+    """Une valeur est en cours de saisie dans la bulle : le Gumball ne garde que ses flèches de déplacement (Rhino)."""
+    return bool(_GB_DRAG["typing"]) and _GB_DRAG["pivot"] is not None
+
+
 def gumball_unfreeze(context=None):
-    _GB_DRAG["pivot"] = _GB_DRAG["axes"] = None
+    _GB_DRAG["typing"] = False
+    _GB_DRAG["pivot"] = _GB_DRAG["axes"] = _GB_DRAG["X"] = None
     if context is not None:
         try:
             for area in context.screen.areas:           # les poignées rejoignent tout de suite la sélection
@@ -118,7 +138,15 @@ def gumball_frozen(context):
     if ops is not None and not any(op.bl_idname.startswith(_GB_DRAG["owner"]) for op in ops):
         gumball_unfreeze()
         return None
-    return _GB_DRAG["pivot"], _GB_DRAG["axes"]
+    X = _GB_DRAG["X"]
+    if X is None:
+        return _GB_DRAG["pivot"], _GB_DRAG["axes"]
+    R = X.to_3x3()
+    axes = []
+    for a in _GB_DRAG["axes"]:
+        v = R @ a
+        axes.append(v.normalized() if v.length > 1e-9 else Vector(a))      # (échelle : les axes gardent leur direction)
+    return X @ _GB_DRAG["pivot"], axes
 
 
 def gumball_selection(context):
@@ -310,6 +338,7 @@ class GumballBase(bpy.types.Operator):
 
     def apply(self, value):
         X = self.xform(value, getattr(self, "uniform", False))
+        gumball_drag_xform(X)                     # le Gumball suit la sélection pendant l'opération (comme Rhino)
         if self.edit:
             self.edit_apply(X)
             return
@@ -320,6 +349,7 @@ class GumballBase(bpy.types.Operator):
                 pass
 
     def restore(self):
+        gumball_drag_xform(None)
         if self.edit:
             self.edit_apply(Matrix.Identity(4))
             return
@@ -331,7 +361,11 @@ class GumballBase(bpy.types.Operator):
 
     def label(self):
         base = self._label()
-        return ("Copy - " + base) if getattr(self, "alt_copy", False) and not getattr(self, "NO_COPY", False) else base
+        if not getattr(self, "alt_copy", False) or getattr(self, "NO_COPY", False):
+            return base
+        if self.edit and copy_shift() and not getattr(self, "ctrl_held", False):
+            return "Extrude - " + base                  # (3ds Max : Maj + glisser des arêtes ou des faces)
+        return "Copy - " + base
 
     def _label(self):
         ax = GUMBALL_AXES[self.axis]
@@ -346,14 +380,48 @@ class GumballBase(bpy.types.Operator):
             return f"Rotate around {ax}: {self.value:.2f}°"
         return f"Scale {'(uniform)' if getattr(self, 'uniform', False) else ax}: ×{self.value:.4f}"
 
+    def bubble(self, context):
+        """Bulle de saisie près de la poignée cliquée (comme Rhino), dans le style des barres du bas."""
+        try:
+            if self.mode != 'type':
+                value_bubble_hide(context.area)
+                return
+            region, rv3d = context.region, context.region_data
+            p0 = location_3d_to_region_2d(region, rv3d, self.pivot)
+            p1 = location_3d_to_region_2d(region, rv3d, self.pivot + self.dir * 1e-3)
+            if p0 is None:
+                value_bubble_hide(context.area)
+                return
+            L = GUMBALL_PX * gumball_k(context)
+            if self.kind == 'ROTATE':
+                a = p0 + Vector((0.45, 0.45)) * L
+            else:
+                v = (p1 - p0) if p1 is not None else Vector((1.0, 0.0))
+                v = v.normalized() if v.length > 1e-9 else Vector((1.0, 0.0))
+                a = p0 + v * L * (1.25 if self.kind == 'MOVE' else -0.93)    # au bout de la flèche (Rhino)
+            ax = GUMBALL_AXES[self.axis]
+            col = (*GUMBALL_COLORS[self.axis][:3], 1.0)
+            if self.kind == 'MOVE':
+                parts = [(tr_text("Distance to move in "), None, False), (ax, col, True)]
+            elif self.kind == 'ROTATE':
+                parts = [(tr_text("Angle to rotate around "), None, False), (ax, col, True)]
+            else:
+                parts = [(tr_text("Scale factor along "), None, False), (ax, col, True)]
+            value_bubble_show(context.area, (a.x, a.y), parts, self.typed)
+        except (AttributeError, ReferenceError, TypeError, ValueError, RuntimeError):
+            pass
+
     def header(self, context):
+        self.bubble(context)
         if self.mode == 'type':
             unit = {'MOVE': self.unit_label or "", 'ROTATE': "°", 'SCALE': "×"}[self.kind]
             lv = last_typed((self.bl_idname, self.kind)) if not self.typed else None
             last = "" if lv is None else f" (nothing typed: {fmt_typed(lv / self.unit_f if self.kind == 'MOVE' else lv)}, last value)"
             txt = f"{self.label()}   |   type the value: {self.typed or '_'} {unit}   |   Enter: apply{last}   Esc: cancel"
         else:
-            txt = f"{self.label()}   |   release: apply   Esc: cancel" + ("" if self.kind == 'PLANE' else "   (a click without dragging lets you type the value)") + ("   |   90° steps, Shift: free rotation" if self.kind == 'ROTATE' else "")
+            txt = f"{self.label()}   |   release: apply   Esc: cancel" + ("" if self.kind == 'PLANE' else "   (a click without dragging lets you type the value)") + (f"   |   90° steps, {lock_key_name()}: free rotation" if self.kind == 'ROTATE' else "")
+            if not getattr(self, "NO_COPY", False):
+                txt += f"   |   {copy_key_name()}: copy"
         try:
             set_prompt(context.area, txt)
         except (AttributeError, ReferenceError):
@@ -368,6 +436,8 @@ class GumballBase(bpy.types.Operator):
         ghost_show(context.area, self._ghost)
 
     def finish_ui(self, context):
+        _ALT_HOVER["handle"] = None
+        value_bubble_hide(getattr(context, "area", None))
         gumball_unfreeze(context)
         ghost_hide()
         try:
@@ -397,7 +467,8 @@ class GumballBase(bpy.types.Operator):
         self.press = self.mouse(context, event)
         self.mode = 'wait'
         self.typed = ''
-        self.alt_copy = bool(event.alt)
+        self.alt_copy = copy_held(event)
+        self.ctrl_held = bool(event.ctrl)
         self.uniform = False
         self.value = self.default_value()
         self.acc = 0.0
@@ -406,7 +477,7 @@ class GumballBase(bpy.types.Operator):
             return {'CANCELLED'}
         self.ref = s0
         self.last = s0
-        gumball_freeze(context, self.pivot, "DESSIN_OT_gumball")       # les poignées restent à leur place pendant le glisser
+        gumball_freeze(context, self.pivot, "DESSIN_OT_gumball")       # repère de départ du Gumball, qui suit ensuite la sélection
         context.window_manager.modal_handler_add(self)
         self.header(context)
         return {'RUNNING_MODAL'}
@@ -428,32 +499,38 @@ class GumballBase(bpy.types.Operator):
 
     def commit(self, context):
         if getattr(self, "alt_copy", False) and not getattr(self, "NO_COPY", False):
-            if self.edit:
-                copy_moved_edit(self.items)
-            else:
-                copy_moved_objects(context, self.items)
+            drag_copy_commit(context, self.items, self.edit, ctrl=getattr(self, "ctrl_held", False))
         self.finish_ui(context)
         return {'FINISHED'}
 
     def modal(self, context, event):
         et = event.type
-        if et in {'LEFT_ALT', 'RIGHT_ALT'}:
-            self.alt_copy = event.value == 'PRESS'
+        if et in {'LEFT_CTRL', 'RIGHT_CTRL'}:
+            self.ctrl_held = event.value == 'PRESS'                        # (3ds Max : Ctrl + Maj = copie détachée)
+        elif et in {'MOUSEMOVE', 'LEFTMOUSE'}:
+            self.ctrl_held = bool(event.ctrl)
+        mod = copy_mod_event(event, getattr(self, "alt_copy", False))     # Alt ou Maj : copie (selon les préférences)
+        if mod is not None:
+            self.alt_copy = mod[0]
             self.header(context)
             self.update_ghost(context)
             return {'RUNNING_MODAL'}
         if et in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
-            self.alt_copy = bool(event.alt)
+            self.alt_copy = copy_update(event, getattr(self, "alt_copy", False))
             self.update_ghost(context)
-        elif event.value == 'PRESS' and event.alt:
+        elif event.value == 'PRESS' and copy_held(event):
             self.alt_copy = True
         if self.mode == 'type':
             if event.value == 'PRESS':
                 if et == 'ESC':
                     return self.cancel_all(context)
-                if et in {'RET', 'NUMPAD_ENTER', 'LEFTMOUSE'}:
-                    self.enter_last(et != 'LEFTMOUSE')
+                if et in {'RET', 'NUMPAD_ENTER'}:
+                    self.enter_last(True)
+                    self.apply(self.value)          # l'objet se déplace maintenant, une fois la valeur validée
                     return self.commit(context)
+                if et == 'LEFTMOUSE':           # clic ailleurs : la saisie est abandonnée et le clic agit normalement (Rhino)
+                    self.cancel_all(context)
+                    return {'CANCELLED', 'PASS_THROUGH'}
                 if et == 'BACK_SPACE':
                     self.typed = self.typed[:-1]
                 elif event.unicode and event.unicode in "0123456789.,-":
@@ -464,8 +541,7 @@ class GumballBase(bpy.types.Operator):
                         self.typed += ch
                 else:
                     return {'PASS_THROUGH'}
-                self.value = self.typed_value()
-                self.apply(self.value)
+                self.value = self.typed_value()      # (appliquée seulement à la validation, comme dans Rhino)
                 self.header(context)
                 return {'RUNNING_MODAL'}
             return {'PASS_THROUGH'} if et not in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'} else {'RUNNING_MODAL'}
@@ -475,8 +551,8 @@ class GumballBase(bpy.types.Operator):
             if self.mode == 'wait' and (m - self.press).length > 5.0 * px_scale():
                 self.mode = 'drag'
             if self.mode == 'drag':
-                self.uniform = bool(event.shift) and self.kind == 'SCALE'
-                self.value = self.value_from_sample(self.sample(context, event), event.shift)
+                self.uniform = lock_held(event) and self.kind == 'SCALE'
+                self.value = self.value_from_sample(self.sample(context, event), lock_held(event))
                 self.value = self.snap_move(context, event, self.value)
                 self.apply(self.value)
                 self.header(context)
@@ -487,6 +563,7 @@ class GumballBase(bpy.types.Operator):
             if self.kind == 'PLANE':
                 return self.cancel_all(context)         # déplacement dans un plan : pas de valeur à taper, un clic ne fait rien
             self.mode = 'type'          # simple clic : on tape la valeur
+            _GB_DRAG["typing"] = True
             self.typed = ''
             self.value = self.default_value()
             self.header(context)
@@ -784,5 +861,6 @@ class DESSIN_OT_gumball_extrude(GumballBase):
 
 def _late_imports():
     """Noms définis dans des modules chargés après celui-ci : ils ne servent qu'à l'exécution des outils."""
-    global set_prompt
+    global set_prompt, value_bubble_hide, value_bubble_show
     from .cplane import set_prompt
+    from .command_line import value_bubble_hide, value_bubble_show

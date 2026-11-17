@@ -43,7 +43,7 @@ try:
           'RU':("Перенести","п","перенести","Удлинить кривую","удлинить"),'TR':("Taşı","m","tasi","Eğriyi uzat","uzat"),
           'ZH':("移动","m","move","延伸曲线","extend"),'JA':("移動","m","move","曲線を延長","extend"),'KO':("이동","m","move","곡선 연장","extend")}
     codes=[c for c,_n,_d in m.LANGUAGE_ITEMS]
-    rec(SEC,"onze langues au choix : anglais, français et les neuf nouvelles",codes==['EN','FR','DE','ES','IT','PT','RU','TR','ZH','JA','KO'],codes)
+    rec(SEC,"« suivre Blender » puis onze langues : anglais, français et les neuf nouvelles",codes==['AUTO','EN','FR','DE','ES','IT','PT','RU','TR','ZH','JA','KO'],codes)
     for code,(name,short,word,xname,xword) in want.items():
         setlang(code)
         a,b,c_,d=first(short),first(word),first(xword),first("move")

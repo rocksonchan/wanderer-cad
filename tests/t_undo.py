@@ -5,7 +5,7 @@ m.DessinTransform=mirror(m.DessinTransform)
 import bmesh, sys
 class FL:
     def __getattr__(self,n):
-        if n=='panel': return lambda *a,**k:(FL(),FL())
+        if n in ('panel','panel_prop'): return lambda *a,**k:(FL(),FL())
         return lambda *a,**k: FL()
 PANELS=[c for n,c in inspect.getmembers(m,inspect.isclass) if n.startswith('DESSIN_PT') and 'draw' in vars(c)]
 def followups(tag):

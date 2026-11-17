@@ -1,21 +1,17 @@
-"""Wanderer CAD : Import DXF / DWG."""
+"""Wanderer CAD : Import / export DXF."""
 
 import bpy
 import math
 import numpy as np
 import os
 import re
-import shutil
-import subprocess
-import sys
-import tempfile
 import time
 
 from mathutils import Matrix, Vector
 from mathutils.geometry import interpolate_bezier
 
 from . import layout_engine as le
-from .core import TAU, pref
+from .core import TAU
 from .layers import _LAYERCOL, find_layer_collection
 
 
@@ -642,19 +638,15 @@ def dxf_build(context, header, layers, prims, opts, label):
 
 
 # --------------------------------------------------------------------------
-# Export DXF du modèle (R12 : le format que tout le monde relit) et passerelle DWG.
-# Le DWG appartient à Autodesk : comme FreeCAD ou QGIS, on passe par un convertisseur installé sur l'ordinateur
-# (ODA File Converter, gratuit ; à défaut dwg2dxf / dxf2dwg de LibreDWG) : DWG -> DXF à l'import, DXF -> DWG à l'export.
+# Export DXF du modèle (R12 : le format que tout le monde relit), écrit entièrement par l'add-on.
 # --------------------------------------------------------------------------
+
+CIRCLE_TOL = 5e-4                 # écart relatif toléré pour reconnaître un cercle ou un arc
+CIRCLE_MIN_POLY = 32              # une polyligne n'est prise pour un cercle qu'à partir de ce nombre de points
 
 EXPORT_UNITS = {'MM': (0.001, 4), 'CM': (0.01, 5), 'M': (1.0, 6), 'IN': (0.0254, 1), 'FT': (0.3048, 2)}       # (mètres, code $INSUNITS)
 SCENE_UNIT_KEY = {'MILLIMETERS': 'MM', 'CENTIMETERS': 'CM', 'METERS': 'M', 'KILOMETERS': 'M', 'MICROMETERS': 'MM',
                   'INCHES': 'IN', 'FEET': 'FT', 'MILES': 'FT', 'THOU': 'IN', 'ADAPTIVE': 'M'}
-DWG_VERSIONS = (('ACAD2018', "2018 (AutoCAD 2018 and later)", ""), ('ACAD2013', "2013", ""), ('ACAD2010', "2010", ""),
-                ('ACAD2007', "2007", ""), ('ACAD2004', "2004", ""), ('ACAD2000', "2000", ""))
-CIRCLE_TOL = 5e-4                 # écart relatif toléré pour reconnaître un cercle ou un arc
-CIRCLE_MIN_POLY = 32              # une polyligne n'est prise pour un cercle qu'à partir de ce nombre de points
-
 
 def export_unit(scene, units='SCENE'):
     """(clé d'unité, facteur unités Blender -> unités du fichier, code $INSUNITS). 'SCENE' : l'unité affichée par la scène."""
@@ -1034,114 +1026,16 @@ def dxf_escape_text(t):
     return "".join(out)
 
 
-# ---- convertisseur DWG <-> DXF ----
-
-def cad_converter():
-    """Convertisseur trouvé sur l'ordinateur : ('oda', chemin) | ('libredwg', dossier) | None."""
-    cand = []
-    custom = (pref("oda_path") or "").strip()
-    if custom:
-        custom = bpy.path.abspath(custom)
-        if custom.lower().endswith(".app"):
-            custom = os.path.join(custom, "Contents", "MacOS", "ODAFileConverter")
-        cand.append(custom)
-    if sys.platform == "darwin":
-        cand += ["/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter",
-                 os.path.expanduser("~/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter")]
-    elif sys.platform.startswith("win"):
-        import glob
-        for root in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
-            cand += sorted(glob.glob(os.path.join(root, "ODA", "ODAFileConverter*", "ODAFileConverter.exe")), reverse=True)
-    else:
-        cand += ["/usr/bin/ODAFileConverter", "/usr/local/bin/ODAFileConverter"]
-    which = shutil.which("ODAFileConverter")
-    if which:
-        cand.append(which)
-    for c in cand:
-        if c and os.path.isfile(c):
-            return ('oda', c)
-    a, b = shutil.which("dwg2dxf"), shutil.which("dxf2dwg")
-    if a or b:
-        return ('libredwg', os.path.dirname(a or b))
-    return None
-
-
-CONVERTER_HELP = ("DWG needs a converter on this computer: install the free ODA File Converter (opendesign.com > "
-                  "ODA File Converter), or set its location in the Wanderer CAD preferences (DXF / DWG). DXF works without it")
-
-
-def cad_convert(src, to_ext, version='ACAD2018', timeout=300):
-    """Convertit un fichier DWG en DXF ou DXF en DWG avec le convertisseur de l'ordinateur. Retourne le chemin du fichier
-    produit, dans un dossier temporaire (à l'appelant de le déplacer). Lève RuntimeError avec un message pour l'utilisateur."""
-    conv = cad_converter()
-    if conv is None:
-        raise RuntimeError(CONVERTER_HELP)
-    to_ext = to_ext.upper().lstrip(".")
-    name = os.path.basename(src)
-    stem, ext = os.path.splitext(name)
-    tmp_in, tmp_out = tempfile.mkdtemp(prefix="wd_cad_in_"), tempfile.mkdtemp(prefix="wd_cad_out_")
-    try:
-        shutil.copyfile(src, os.path.join(tmp_in, name))
-        target = os.path.join(tmp_out, stem + "." + to_ext.lower())
-        if conv[0] == 'oda':
-            # ODAFileConverter "dossier d'entrée" "dossier de sortie" version type récursif audit [filtre]
-            cmd = [conv[1], tmp_in, tmp_out, version, to_ext, "0", "1", "*" + ext.upper()]
-        else:
-            tool = os.path.join(conv[1], "dwg2dxf" if to_ext == "DXF" else "dxf2dwg")
-            if not os.path.isfile(tool) and not shutil.which(os.path.basename(tool)):
-                raise RuntimeError(CONVERTER_HELP)
-            cmd = [tool, "-y", "-o", target, os.path.join(tmp_in, name)]
-        try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("The DWG converter did not answer (stopped after %d s)" % timeout)
-        except OSError as ex:
-            raise RuntimeError("Cannot start the DWG converter: %s" % ex)
-        found = target if os.path.isfile(target) else None
-        if found is None:                           # (nom de fichier rendu en majuscules ou autrement par le convertisseur)
-            for f in os.listdir(tmp_out):
-                if f.lower().endswith("." + to_ext.lower()):
-                    found = os.path.join(tmp_out, f)
-                    break
-        if found is None or os.path.getsize(found) == 0:
-            tail = (res.stderr or res.stdout or b"").decode("utf-8", "replace").strip().splitlines()[-1:] if res else []
-            raise RuntimeError("The DWG converter produced no file" + (": " + tail[0] if tail else ""))
-        keep = tempfile.mkdtemp(prefix="wd_cad_")
-        out = os.path.join(keep, os.path.basename(found))
-        shutil.move(found, out)
-        return out
-    finally:
-        shutil.rmtree(tmp_in, ignore_errors=True)
-        shutil.rmtree(tmp_out, ignore_errors=True)
-
-
-def dxf_file_to(path, dxf_path, version='ACAD2018'):
-    """Place à `path` le fichier demandé : le DXF lui-même, ou sa conversion en DWG quand l'extension est .dwg."""
-    if path.lower().endswith(".dwg"):
-        made = cad_convert(dxf_path, "DWG", version)
-        try:
-            shutil.move(made, path)
-        finally:
-            shutil.rmtree(os.path.dirname(made), ignore_errors=True)
-    elif os.path.abspath(dxf_path) != os.path.abspath(path):
-        shutil.move(dxf_path, path)
-    return path
-
-
 class DESSIN_OT_export_cad(bpy.types.Operator):
     bl_idname = "dessin.export_cad"
-    bl_label = "Export DXF / DWG"
-    bl_description = ("Exports the model as a DXF (R12) or a DWG drawing: lines, polylines, arcs and circles, 3D faces of the solids "
-                      "and text, with the layers and their colors. DWG needs the free ODA File Converter on this computer")
+    bl_label = "Export DXF"
+    bl_description = ("Exports the model as a DXF (R12) drawing: lines, polylines, arcs and circles, 3D faces of the solids "
+                      "and text, with the layers and their colors")
     bl_options = {'REGISTER'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH', options={'SKIP_SAVE'})
-    filter_glob: bpy.props.StringProperty(default="*.dxf;*.dwg", options={'HIDDEN'})
+    filter_glob: bpy.props.StringProperty(default="*.dxf", options={'HIDDEN'})
     check_existing: bpy.props.BoolProperty(default=True, options={'HIDDEN'})
-    kind: bpy.props.EnumProperty(name="Format", default='DXF',
-                                 items=(('DXF', "DXF", "Text format read by every CAD program; nothing to install"),
-                                        ('DWG', "DWG", "AutoCAD drawing, written through the ODA File Converter")))
-    version: bpy.props.EnumProperty(name="DWG version", default='ACAD2018', items=DWG_VERSIONS)
     selected: bpy.props.BoolProperty(name="Selection only", default=False, description="Exports only the selected objects")
     units: bpy.props.EnumProperty(
         name="Units", default='SCENE',
@@ -1155,18 +1049,12 @@ class DESSIN_OT_export_cad(bpy.types.Operator):
     def invoke(self, context, event):
         if not self.filepath:
             base = os.path.splitext(bpy.data.filepath)[0] if bpy.data.filepath else os.path.join(os.path.expanduser("~"), "model")
-            self.filepath = base + "." + self.kind.lower()
+            self.filepath = base + ".dxf"
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
     def draw(self, context):
         col = self.layout.column()
-        col.prop(self, "kind")
-        row = col.row()
-        row.enabled = self.kind == 'DWG'
-        row.prop(self, "version")
-        if self.kind == 'DWG' and cad_converter() is None:
-            col.label(text="ODA File Converter not found", icon='ERROR')
         for k in ("selected", "units", "faces", "arcs"):
             col.prop(self, k)
 
@@ -1176,55 +1064,38 @@ class DESSIN_OT_export_cad(bpy.types.Operator):
             self.report({'WARNING'}, "Export: no file name")
             return {'CANCELLED'}
         path = bpy.path.abspath(self.filepath)
-        low = path.lower()
-        if low.endswith(".dwg"):
-            kind = 'DWG'
-        elif low.endswith(".dxf"):
-            kind = 'DXF'
-        else:
-            kind = self.kind
-            path = os.path.splitext(path)[0] + "." + kind.lower()
-        if kind == 'DWG' and cad_converter() is None:
-            self.report({'ERROR'}, CONVERTER_HELP)
-            return {'CANCELLED'}
+        if not path.lower().endswith(".dxf"):
+            path = os.path.splitext(path)[0] + ".dxf"
         t0 = time.monotonic()
         ents, layers, stats = dxf_collect(context, self.selected, self.faces, self.arcs)
         if not ents:
             self.report({'WARNING'}, "Nothing to export (no visible curve, solid or text" + (" in the selection)" if self.selected else ")"))
             return {'CANCELLED'}
         key, factor, code = export_unit(context.scene, self.units)
-        tmp = tempfile.mkdtemp(prefix="wd_dxf_")
         try:
-            dxf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".dxf")
-            write_model_dxf(dxf, ents, layers, factor, code)
-            dxf_file_to(path, dxf, self.version)
-        except RuntimeError as ex:
-            self.report({'ERROR'}, str(ex))
-            return {'CANCELLED'}
+            write_model_dxf(path, ents, layers, factor, code)
         except OSError as ex:
             self.report({'ERROR'}, f"Cannot write the file: {ex}")
             return {'CANCELLED'}
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
         unit = {'MM': "mm", 'CM': "cm", 'M': "m", 'IN': "in", 'FT': "ft", 'NONE': "units"}[key]
-        self.report({'INFO'}, f"{kind}: {len(ents)} entities ({stats['curves']} curves, {stats['circles']} arcs / circles, {stats['faces']} faces, "
+        self.report({'INFO'}, f"DXF: {len(ents)} entities ({stats['curves']} curves, {stats['circles']} arcs / circles, {stats['faces']} faces, "
                               f"{stats['texts']} texts) on {len(layers)} layers, in {unit}, {time.monotonic() - t0:.1f}s  ->  {os.path.basename(path)}")
         return {'FINISHED'}
 
 
 def menu_export_cad(self, context):
-    self.layout.operator(DESSIN_OT_export_cad.bl_idname, text="DXF / DWG drawing (Wanderer)")
+    self.layout.operator(DESSIN_OT_export_cad.bl_idname, text="DXF drawing (Wanderer)")
 
 
 class DESSIN_OT_import_cad(bpy.types.Operator):
     bl_idname = "dessin.import_cad"
-    bl_label = "Import DXF / DWG"
-    bl_description = ("Imports a DXF or a DWG drawing: lines, polylines, arcs, circles, ellipses, splines, 3D faces, text and blocks, "
-                      "with layers as layers (collections) and their colors. DWG needs the free ODA File Converter on this computer")
+    bl_label = "Import DXF"
+    bl_description = ("Imports a DXF drawing: lines, polylines, arcs, circles, ellipses, splines, 3D faces, text and blocks, "
+                      "with layers as layers (collections) and their colors")
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')
-    filter_glob: bpy.props.StringProperty(default="*.dxf;*.dwg", options={'HIDDEN'})
+    filter_glob: bpy.props.StringProperty(default="*.dxf", options={'HIDDEN'})
     units: bpy.props.EnumProperty(
         name="Units", default='AUTO',
         items=(('AUTO', "From the file", "Uses the drawing units written in the file (unitless: numbers are kept)"),
@@ -1256,23 +1127,15 @@ class DESSIN_OT_import_cad(bpy.types.Operator):
             self.report({'ERROR'}, "File not found")
             return {'CANCELLED'}
         t0 = time.monotonic()
-        made = None
-        try:
-            src = path
-            if path.lower().endswith(".dwg"):          # DWG : converti en DXF par le convertisseur de l'ordinateur, puis lu
-                made = cad_convert(path, "DXF")
-                src = made
-            with open(src, "rb") as f:
-                header, layers, blocks, ents = dxf_parse(f.read())
-        except RuntimeError as ex:
-            self.report({'ERROR'}, str(ex))
+        if path.lower().endswith(".dwg"):
+            self.report({'ERROR'}, "DWG is not supported: save the drawing as DXF from your CAD program, then import the DXF")
             return {'CANCELLED'}
+        try:
+            with open(path, "rb") as f:
+                header, layers, blocks, ents = dxf_parse(f.read())
         except (OSError, ValueError) as ex:
             self.report({'ERROR'}, f"Cannot read the file: {ex}")
             return {'CANCELLED'}
-        finally:
-            if made:
-                shutil.rmtree(os.path.dirname(made), ignore_errors=True)
         opts = {"segments": self.segments, "text": self.text, "blocks": self.blocks, "mode": self.mode, "units": self.units,
                 "layers": self.layers, "entity_colors": self.entity_colors}
         stats = {"inserts": 0, "skipped": {}, "truncated": False}
@@ -1296,7 +1159,7 @@ class DESSIN_OT_import_cad(bpy.types.Operator):
 
 
 def menu_import_cad(self, context):
-    self.layout.operator(DESSIN_OT_import_cad.bl_idname, text="DXF / DWG drawing (Wanderer)")
+    self.layout.operator(DESSIN_OT_import_cad.bl_idname, text="DXF drawing (Wanderer)")
 
 
 def _late_imports():

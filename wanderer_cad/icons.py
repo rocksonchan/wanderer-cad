@@ -579,6 +579,7 @@ ICON_SVG.update({
     'unroll': '<ellipse class="n" cx="8" cy="6" rx="4" ry="1.8"/><path class="n" d="M4 6V16C4 18.4 12 18.4 12 16V6"/><path class="n" d="M14 11H16.6M15.3 9.6L16.7 11L15.3 12.4"/><rect class="af" x="17.6" y="5" width="4.9" height="12" rx="0.8"/><rect class="a" x="17.6" y="5" width="4.9" height="12" rx="0.8"/>',
     'rebuild_srf': '<path class="g" d="M3 17L7 7L12 11L17 5L21 14" stroke-dasharray="1.4 1.4"/><path class="a" d="M3 17C5 12 8 9 12 9C16 9 19 11 21 14"/><circle class="a" cx="3" cy="17" r="1.4"/><circle class="a" cx="9" cy="10" r="1.4"/><circle class="a" cx="15" cy="10" r="1.4"/><circle class="a" cx="21" cy="14" r="1.4"/>',
     'orient': '<rect class="n" x="3" y="12" width="7" height="7" rx="1"/><path class="g" d="M6.5 12V8M3 15.5H1" stroke-dasharray="1.4 1.4"/><path class="a" d="M14 11L18 6M14 11L20 12"/><g transform="rotate(-30 17 15)"><rect class="af" x="13.5" y="13" width="7" height="7" rx="1"/></g><path class="n" d="M11 15L13 14M12.3 12.5L13.8 14.2L11.9 15"/>',
+    'orient3pt': '<path class="n" d="M2 19L6 12L11 16Z"/><circle class="g" cx="2" cy="19" r="1.2"/><circle class="g" cx="6" cy="12" r="1.2"/><circle class="g" cx="11" cy="16" r="1.2"/><path class="a" d="M12 10L16 6M12 10L17.5 10.5"/><path class="af" d="M14 21L18.5 11.5L22 19Z"/><path class="a" d="M14 21L18.5 11.5L22 19Z"/>',
 })
 
 # Mise en page (2.96.125) : la feuille avec son cartouche, et un détail (cadre + vue du modèle)
@@ -587,6 +588,7 @@ ICON_SVG.update({
               '<path class="g" d="M14.5 7h4M14.5 9.5h4M5.5 14.5h7"/><path class="a" d="M13.5 15.5h7.5M13.5 15.5v5M13.5 18h7.5"/>',
     'detail': '<rect class="a" x="3" y="4.5" width="18" height="15" rx="1"/><path class="n" d="M12 7.5 16.5 10v5L12 17.5 7.5 15v-5z"/>'
               '<path class="n" d="M7.5 10 12 12.5 16.5 10M12 12.5v5"/><path class="af" d="M12 7.5 16.5 10 12 12.5 7.5 10z"/>',
+    'callout': '<rect class="n" x="2.5" y="3.5" width="11" height="9" rx="0.8"/><rect class="a" x="5" y="6" width="4.5" height="3.5" rx="0.5"/><path class="g" d="M9.5 9.5 13.5 13"/><rect class="a" x="12.5" y="12" width="9" height="8.5" rx="0.8"/>',
 })
 
 ICON_ALIAS = {"scale_2d": "scale2d", "scale_1d": "scale1d", "scale_size": "scalesize", "ellipse_c": "ellipse", "poly_c": "polygon", "camera_target": "camera_t"}
@@ -1120,7 +1122,7 @@ def _icon_bytes(kind="move"):
 ICON_FAMILY_COLORS = ((169, 185, 209), (224, 144, 122), (169, 189, 126), (227, 184, 99),
                       (185, 154, 196), (217, 168, 140), (201, 163, 107), (143, 194, 189), (214, 140, 170))
 ICON_FAMILIES = (
-    ("select", "sel_box", "sel_circle", "lasso", "stretch", "move", "copy", "rotate", "scale", "scale_2d", "scale_1d", "scale_size", "mirror", "array_l", "array_r", "array_p", "align", "orient"),
+    ("select", "sel_box", "sel_circle", "lasso", "stretch", "move", "copy", "rotate", "scale", "scale_2d", "scale_1d", "scale_size", "mirror", "array_l", "array_r", "array_p", "align", "orient", "orient3pt"),
     ("join", "explode", "trim", "cut", "divide", "overkill", "split_face", "bool_u", "bool_d", "bool_i", "bool_s", "fillet", "chamfer", "fillet_c", "chamfer_c", "offset_srf", "offset",
      "block", "block_insert", "extend_crv", "merge_faces"),
     ("polyline", "xline", "curve_cp", "curve_i", "pen", "sketch", "point", "rect", "circle", "circle_d", "ellipse_c", "ellipse_d", "ellipse_f", "ellipse_k",
@@ -1130,7 +1132,7 @@ ICON_FAMILIES = (
     ("blend_srf", "match_srf", "fillet_srf", "chamfer_srf", "extend_srf", "split_iso", "untrim", "untrim_holes", "thicken", "cap", "shell", "extract_srf", "unroll", "rebuild_srf"),
     ("box", "cylinder", "cone", "tcone", "pyramid", "tpyramid", "tube", "sphere", "ellipsoid", "tsphere", "torus", "pipe"),
     ("light_point", "light_spot", "light_sun", "light_area", "camera", "camera_target"),
-    ("dim", "dim_chain", "dim_ord", "dim_arc", "dim_r", "dim_a", "note", "text", "center_mark", "dim_edit", "hatch", "hatch_region", "area", "dist", "id_point", "make2d", "clip_plane", "layout", "detail"),
+    ("dim", "dim_chain", "dim_ord", "dim_arc", "dim_r", "dim_a", "note", "text", "center_mark", "dim_edit", "hatch", "hatch_region", "area", "dist", "id_point", "make2d", "clip_plane", "layout", "detail", "callout"),
     ("subd_box", "subd_sphere", "subd_cylinder", "subd_cone", "subd_torus", "subd_plane", "subdc_to_subd", "subdc_to_mesh",
      "subdc_loft", "subdc_sweep1", "subdc_sweep2", "subdc_revolve",
      "subdc_multipipe", "subdc_display", "subdc_sym_x", "subdc_sym_y", "subdc_sym_z", "subdc_crease", "subdc_uncrease",

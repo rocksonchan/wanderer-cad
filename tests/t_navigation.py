@@ -93,10 +93,8 @@ def main():
     runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/reload_addon.py'), run_name='__main__')
     assert bpy.context.preferences.addons['wanderer_cad'].preferences.view_pan is False
     assert not sys.modules['wanderer_cad.navigation']._VIEW_KEYMAPS
-    assert bpy.ops.dessin.theme_reset.get_rna_type()
-    assert bpy.ops.dessin.restore_theme.get_rna_type()
     assert [(o.name, o.as_pointer()) for o in bpy.data.objects] == before_objects
-    print('PASS development reload retains both theme actions and native navigation')
+    print('PASS development reload retains native navigation')   # theme actions left the add-on in 2.96.128
     addon_utils.disable('wanderer_cad', default_set=False)
     print('PASS navigation suite; scene objects preserved')
 

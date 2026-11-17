@@ -259,91 +259,24 @@ cols = {c.name for c in bpy.data.collections}
 chk("... le calque revient avec son nom DXF et sa couleur rouge", any("MURS_PORTEURS" in n for n in cols)
     and any(c.dessin_layer.use_color and near(c.dessin_layer.color, (1, 0, 0), 0.02) for c in bpy.data.collections if "MURS_PORTEURS" in c.name), sorted(cols))
 
-# ================= 4. DWG : la passerelle vers le convertisseur =================
-SEC = "DWG"
-made = build()
-chk("aucun convertisseur sur cette machine", m.cad_converter() is None, m.cad_converter())
-dwg = os.path.join(TMP, "modele.dwg")
-r = export(dwg, units='MM')
-chk("Export DWG sans convertisseur : la commande s'arrête, dit d'installer ODA File Converter, n'écrit rien", (r == {'CANCELLED'} or "ODA File Converter" in str(r)) and not os.path.exists(dwg), r)
+# ================= 4. Plus de DWG (aucun programme extérieur : règle de la plateforme d'extensions) =================
+SEC = "DWG retiré"
+import inspect
+src_all = "".join(inspect.getsource(f) for f in (m.DESSIN_OT_export_cad, m.DESSIN_OT_import_cad))
+chk("ni convertisseur ni programme extérieur : plus de cad_converter, l'export n'a plus de choix DWG", not hasattr(m, "cad_converter") and not hasattr(m, "cad_convert")
+    and "subprocess" not in src_all and "kind" not in m.DESSIN_OT_export_cad.__annotations__)
+fake_dwg = os.path.join(TMP, "dessin.dwg"); open(fake_dwg, "wb").write(b"AC1032")
 with contextlib.redirect_stdout(io.StringIO()):
     try:
-        r = bpy.ops.dessin.import_cad('EXEC_DEFAULT', filepath=path.replace(".dxf", ".dwg"))
+        r = bpy.ops.dessin.import_cad('EXEC_DEFAULT', filepath=fake_dwg)
     except RuntimeError as ex:
         r = str(ex)
-chk("Import d'un DWG sans convertisseur : même message, rien n'est importé", r == {'CANCELLED'} or "ODA File Converter" in str(r) or "not found" in str(r), r)
-# faux convertisseur : note ses arguments et « convertit » en recopiant le fichier sous l'autre extension
-fake = os.path.join(TMP, "ODAFileConverter")
-log = os.path.join(TMP, "appels.json")
-open(fake, "w").write(f'''#!{sys.executable}
-import sys, os, json, shutil, fnmatch
-a = sys.argv[1:]
-calls = json.load(open({log!r})) if os.path.exists({log!r}) else []
-calls.append({{"args": a, "files": sorted(os.listdir(a[0]))}})
-json.dump(calls, open({log!r}, "w"))
-if os.environ.get("WD_FAKE_FAIL"):
-    sys.stderr.write("licence manquante\\n"); sys.exit(3)
-for f in os.listdir(a[0]):
-    if fnmatch.fnmatch(f.upper(), a[6].upper()):
-        shutil.copyfile(os.path.join(a[0], f), os.path.join(a[1], os.path.splitext(f)[0] + "." + a[3].lower()))
-''')
-os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
-m.PREF_DEFAULTS["oda_path"] = fake
-chk("chemin du convertisseur réglé dans les préférences : il est trouvé", m.cad_converter() == ('oda', fake), m.cad_converter())
-r = export(dwg, units='MM')
-calls = json.load(open(log))
-c = calls[-1]
-chk("Export DWG : le convertisseur est appelé comme ODA File Converter l'attend (dossier d'entrée, dossier de sortie, ACAD2018, DWG, 0, 1, *.DXF)",
-    r == {'FINISHED'} and len(c["args"]) == 7 and os.path.isabs(c["args"][0]) and os.path.isabs(c["args"][1]) and c["args"][0] != c["args"][1]
-    and c["args"][2:] == ["ACAD2018", "DWG", "0", "1", "*.DXF"] and c["files"] == ["modele.dxf"], (r, c["args"][2:], c["files"]))
-chk("... le fichier .dwg est à l'endroit demandé, les dossiers temporaires sont supprimés", os.path.isfile(dwg) and os.path.getsize(dwg) > 2000 and not os.path.exists(c["args"][0]) and not os.path.exists(c["args"][1]), os.path.exists(dwg))
-r = export(os.path.join(TMP, "v2013.dwg"), units='MM', version='ACAD2013')
-chk("... version DWG choisie (2013) transmise au convertisseur", r == {'FINISHED'} and json.load(open(log))[-1]["args"][2] == "ACAD2013", json.load(open(log))[-1]["args"][2])
-r = export(os.path.join(TMP, "parformat"), units='MM', kind='DWG')
-chk("... sans extension, le format choisi (DWG) donne le nom du fichier", r == {'FINISHED'} and os.path.isfile(os.path.join(TMP, "parformat.dwg")))
-clear()
-us = BC.scene.unit_settings; us.system = 'METRIC'; us.scale_length = 1.0; us.length_unit = 'MILLIMETERS'
-with contextlib.redirect_stdout(io.StringIO()):
-    r = bpy.ops.dessin.import_cad('EXEC_DEFAULT', filepath=dwg, units='AUTO', mode='ENTITY')
-BC.view_layer.update()
-c = json.load(open(log))[-1]
-d_len, d_lo, d_hi, d_faces, d_txt = measure()
-chk("Import DWG : le convertisseur est appelé pour en faire un DXF (version, DXF, 0, 1, *.DWG), puis le dessin est lu",
-    r == {'FINISHED'} and c["args"][3:] == ["DXF", "0", "1", "*.DWG"] and c["files"] == ["modele.dwg"] and d_faces == 10 and abs(d_len - src_len) < 1e-3 * src_len and d_txt == src_txt,
-    (r, c["args"][2:], d_faces, round(d_len, 3)))
-os.environ["WD_FAKE_FAIL"] = "1"
-bad = os.path.join(TMP, "echec.dwg")
-made = build()
-r = export(bad, units='MM')
-del os.environ["WD_FAKE_FAIL"]
-left = [f for f in os.listdir(tempfile.gettempdir()) if f.startswith(("wd_cad_", "wd_dxf_"))]
-chk("le convertisseur échoue : la commande s'arrête avec son message, aucun fichier ni dossier temporaire ne reste", (r == {'CANCELLED'} or "produced no file" in str(r)) and not os.path.exists(bad) and not left, (r, left))
-app = os.path.join(TMP, "ODAFileConverter.app")
-os.makedirs(os.path.join(app, "Contents", "MacOS"))
-shutil.copy(fake, os.path.join(app, "Contents", "MacOS", "ODAFileConverter"))
-m.PREF_DEFAULTS["oda_path"] = app
-chk("sur Mac, on peut désigner l'application ODAFileConverter.app : le programme est trouvé dedans", m.cad_converter() == ('oda', os.path.join(app, "Contents", "MacOS", "ODAFileConverter")), m.cad_converter())
-m.PREF_DEFAULTS["oda_path"] = fake
-# feuilles d'une mise en page en DWG
-model = BC.scene
-Lp = m.layout_create(model, "Plan", 'A4', margin=10.0, title=True)
-m.layout_open(BC, Lp)
-m.detail_create(Lp, 150.0, 110.0, 120.0, 80.0, 'TOP', scale=100.0, fit=False)
-sheet_dwg = os.path.join(TMP, "feuille.dwg")
-with contextlib.redirect_stdout(io.StringIO()):
-    r = bpy.ops.dessin.layout_export_dwg('EXEC_DEFAULT', filepath=sheet_dwg)
-c = json.load(open(log))[-1]
-chk("Export DWG d'une mise en page : la feuille part au convertisseur et le .dwg est écrit", r == {'FINISHED'} and os.path.isfile(sheet_dwg) and c["args"][2:] == ["ACAD2018", "DWG", "0", "1", "*.DXF"], (r, c["args"][2:]))
-m.PREF_DEFAULTS["oda_path"] = ""
-with contextlib.redirect_stdout(io.StringIO()):
-    try:
-        r = bpy.ops.dessin.layout_export_dwg('EXEC_DEFAULT', filepath=os.path.join(TMP, "feuille2.dwg"))
-    except RuntimeError as ex:
-        r = str(ex)
-chk("... sans convertisseur : message, rien n'est écrit", (r == {'CANCELLED'} or "ODA File Converter" in str(r)) and not os.path.exists(os.path.join(TMP, "feuille2.dwg")), r)
-m.layout_close(BC)
+chk("import d'un .dwg : arrêt avec un message qui dit d'enregistrer en DXF", r == {'CANCELLED'} or "save the drawing as DXF" in str(r), r)
+r = export(os.path.join(TMP, "sansext"), units='MM')
+chk("export sans extension : le fichier prend .dxf", r == {'FINISHED'} and os.path.isfile(os.path.join(TMP, "sansext.dxf")), r)
+chk("plus d'export DWG des mises en page", "layout_export_dwg" not in dir(bpy.ops.dessin))
 first = lambda t: (m.cmd_suggest(t) or [{"label": None}])[0]["label"]
-chk("ligne de commande : importdwg / dxfin, exportmodel / saveasdwg", (first("importdwg"), first("dxfin"), first("exportmodel"), first("saveasdwg")) == ("Import DXF / DWG",) * 2 + ("Export Model (DXF / DWG)",) * 2,
-    (first("importdwg"), first("dxfin"), first("exportmodel"), first("saveasdwg")))
+chk("ligne de commande : dxfin, exportmodel / saveasdxf", (first("dxfin"), first("exportmodel"), first("saveasdxf")) == ("Import DXF", "Export Model (DXF)", "Export Model (DXF)"),
+    (first("dxfin"), first("exportmodel"), first("saveasdxf")))
 shutil.rmtree(TMP, ignore_errors=True)
 summary()

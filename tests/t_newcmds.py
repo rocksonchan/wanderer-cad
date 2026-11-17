@@ -196,6 +196,49 @@ type(o).modal(o,ctx,ev('LEFTMOUSE','PRESS',*scr(1.8,0.3))); r3=type(o).modal(o,c
 ed=curve_objs("Edge"); P=spl(ed[0])[0][0] if ed else []
 chk("outil Duplicate Edge : clic près de l'arête x=2 du dessus -> courbe de (2,-2,4) à (2,2,4)", nl==1 and 'FINISHED' in r3 and len(ed)==1 and len(P)==2 and all(abs(p.x-2)<1e-6 and abs(p.z-4)<1e-6 for p in P) and abs((P[1]-P[0]).length-4)<1e-6, (nl,r3,[tuple(p) for p in P]))
 
+# ================= DupFaceBorder (retour d'un utilisateur : « dupborder » sur le dessus d'une boîte ne donnait rien) =================
+def fborder(o, idx):
+    bm=bmesh.new(); bm.from_mesh(o.data); bm.faces.ensure_lookup_table(); bm.normal_update()
+    ch=m.face_border_chains(o,bm,idx); bm.free(); return ch
+clear(); a=box(size=4,loc=(0,0,2),name="A"); ch=fborder(a,face_at(a,1,4.0))
+chk("DupFaceBorder sur le dessus d'une boîte : une boucle fermée de 4 points, périmètre 16, à z=4", len(ch)==1 and ch[0][1] and len(ch[0][0])==4 and abs(plen(ch[0][0],True)-16)<1e-6 and all(abs(p.z-4)<1e-6 for p in ch[0][0]), [(len(c_),cl) for c_,cl in ch])
+clear(); cy=cyl(); cap=[p.index for p in cy.data.polygons if p.normal.z>0.5][0]; side=[p.index for p in cy.data.polygons if abs(p.normal.z)<0.5][0]
+ch=fborder(cy,cap)
+chk("DupFaceBorder sur le bouchon d'un cylindre : le cercle entier (64 points, fermé, longueur d'un cercle de rayon 1)", len(ch)==1 and ch[0][1] and len(ch[0][0])==64 and abs(plen(ch[0][0],True)-2*math.pi)<0.01, [(len(c_),cl,plen(c_,cl)) for c_,cl in ch])
+ch=fborder(cy,side)
+chk("DupFaceBorder sur le flanc d'un cylindre : ses deux cercles, pas les 64 facettes", len(ch)==2 and all(cl and len(c_)==64 for c_,cl in ch) and sorted(round(c_[0].z,6) for c_,cl in ch)==[-1.0,1.0], [(len(c_),cl) for c_,cl in ch])
+clear(); bm=bmesh.new(); bmesh.ops.create_grid(bm,x_segments=6,y_segments=6,size=3)
+bmesh.ops.delete(bm,geom=[f for f in bm.faces if abs(f.calc_center_median().x)<1.1 and abs(f.calc_center_median().y)<1.1],context='FACES'); hp=mk("Hole",bm)
+ch=fborder(hp,0); L=sorted(round(plen(c_,cl),6) for c_,cl in ch)
+chk("DupFaceBorder sur une face percée (6x6 avec un trou 2x2) : le contour (24) et le trou (8), fermés", len(ch)==2 and all(cl for c_,cl in ch) and L==[8.0,24.0], L)
+clear(); bm=bmesh.new(); bmesh.ops.create_uvsphere(bm,u_segments=32,v_segments=16,radius=2.0); sp=mk("S",bm)
+chk("DupFaceBorder sur une sphère : aucun contour (surface lisse fermée)", fborder(sp,5)==[], fborder(sp,5))
+clear(); a=box(size=4,loc=(0,0,2),name="A"); C.view_layer.update()
+r,o=tool(m.DESSIN_OT_dup_face_border,[('m',0.5,0.5)]); nl=len(o.lines)//2
+chk("outil Duplicate Face Border : au survol du dessus, son contour s'allume (4 segments à z=4)", 'RUNNING_MODAL' in r and nl==4 and all(abs(p.z-4)<1e-6 for p in o.lines), (r,nl))
+type(o).modal(o,ctx,ev('LEFTMOUSE','PRESS',*scr(0.5,0.5))); n1=len(curve_objs("Border"))
+type(o).modal(o,ctx,ev('MOUSEMOVE','NOTHING',*scr(-1.2,1.0))); type(o).modal(o,ctx,ev('LEFTMOUSE','PRESS',*scr(-1.2,1.0)))
+r3=type(o).modal(o,ctx,ev('RET','PRESS',*scr(0,0))); C.view_layer.update()
+bd=curve_objs("Border"); S_=[spl(q) for q in bd]
+chk("... un clic = une courbe fermée sur le contour de la face (4 points à z=4, périmètre 16) ; la boîte n'est pas modifiée", n1==1 and len(bd)==2 and all(len(s)==1 and s[0][1] and len(s[0][0])==4 and abs(plen(s[0][0],True)-16)<1e-6
+    and all(abs(p.z-4)<1e-6 for p in s[0][0]) for s in S_) and len(a.data.polygons)==6 and solid_ok(stats(a)), (n1,len(bd),[[(len(P),cl) for P,cl in s] for s in S_]))
+chk("... Entrée termine ; les courbes créées sont sélectionnées, pas la boîte", 'FINISHED' in r3 and all(q.select_get() for q in bd) and not a.select_get(), r3)
+clear(); a=box(size=4,loc=(0,0,2),name="A"); C.view_layer.update()
+r,o=tool(m.DESSIN_OT_dup_face_border,[('m',0.5,0.5),('ESC',)])
+chk("... Échap sans avoir cliqué : rien n'est créé", 'CANCELLED' in r and len(bpy.data.objects)==1, (r,len(bpy.data.objects)))
+# la scène du retour : une petite boîte posée sur de grands plans
+clear(); 
+for i,s_ in enumerate((40,30,25,20)):
+    bm=bmesh.new(); bmesh.ops.create_grid(bm,x_segments=1,y_segments=1,size=s_/2); mk("Plane%d"%i,bm,loc=(0,0,-0.01*i))
+a=box(size=2,loc=(1,1,1),name="Box"); C.view_layer.update()
+r,o=tool(m.DESSIN_OT_dup_face_border,[('c',1.2,0.8),('RET',)]); bd=curve_objs("Border"); s=spl(bd[0]) if bd else []
+chk("boîte posée sur quatre grands plans, clic sur le dessus de la boîte : le contour de CETTE face (carré de 2 à z=2), pas celui des plans", len(bd)==1 and len(s)==1 and s[0][1] and abs(plen(s[0][0],True)-8)<1e-6
+    and all(abs(p.z-2)<1e-6 and 0-1e-6<=p.x<=2+1e-6 for p in s[0][0]), [(len(P),cl,plen(P,cl)) for P,cl in s])
+r,o=tool(m.DESSIN_OT_dup_face_border,[('c',-8,-8),('RET',)]); bd2=[q for q in curve_objs("Border") if q not in bd]; s=spl(bd2[0]) if bd2 else []
+chk("... clic sur le plan du dessus, à côté de la boîte : le contour de ce plan (carré de 40)", len(bd2)==1 and len(s)==1 and abs(plen(s[0][0],True)-160)<1e-5, [(len(P),plen(P,cl)) for P,cl in s])
+clear(); box(size=4,loc=(0,0,2),name="A"); C.view_layer.update()
+undo_redo("Duplicate Face Border", lambda: tool(m.DESSIN_OT_dup_face_border,[('c',0.5,0.5),('RET',)]))
+
 # ================= MergeAllFaces =================
 def dense_box(cuts=5,size=4,loc=(0,0,2)):
     bm=bmesh.new(); bmesh.ops.create_cube(bm,size=size); bmesh.ops.subdivide_edges(bm,edges=bm.edges[:],cuts=cuts,use_grid_fill=True); return mk("D",bm,loc=loc)
@@ -291,12 +334,36 @@ chk("Orient puis Échap avant la fin : l'objet revient à sa place", (b.matrix_w
 clear(); box(size=2,loc=(-20,-20,1)); C.view_layer.update()
 def run_or(): sel(bpy.data.objects["Box"]); o,r=start(m.DESSIN_OT_orient); E(o,('c',0,0),('c',2,0),('c',10,0),('c',10,5))
 undo_redo("Orient", run_or)
+# ================= Orient 3 Points =================
+clear(); b=box(size=2,loc=(-20,-20,1)); sel(b)
+o,r=start(m.DESSIN_OT_orient3pt); r=E(o,('c',0,0),('c',2,0),('c',0,2),('c',10,0),('c',10,5),('c',5,0)); C.view_layer.update()
+M=b.matrix_world; xa=M.to_3x3()@Vector((1,0,0)); za=M.to_3x3()@Vector((0,0,1))
+chk("Orient3Pt : plan XY vers le même plan tourné de 90° -> comme Orient, taille gardée", 'FINISHED' in r and (M.translation-Vector((30,-20,1))).length<1e-4
+    and (xa-Vector((0,1,0))).length<1e-5 and (za-Vector((0,0,1))).length<1e-5, (tuple(M.translation),tuple(xa),tuple(za)))
+clear(); b=box(size=2,loc=(-20,-20,1)); sel(b)
+o,r=start(m.DESSIN_OT_orient3pt); r=E(o,('c',0,0),('c',2,0),('c',0,2),('c',10,0),('c',10,5),('c',15,0)); C.view_layer.update()
+M=b.matrix_world; za=M.to_3x3()@Vector((0,0,1))
+chk("Orient3Pt : le 3e point de l'autre côté retourne l'objet (ce qu'Orient à 2 points ne sait pas faire)",
+    (M.translation-Vector((-10,-20,-1))).length<1e-4 and (za-Vector((0,0,-1))).length<1e-5 and abs(M.to_3x3().determinant()-1)<1e-5, (tuple(M.translation),tuple(za)))
+clear(); b=box(size=2,loc=(-20,-20,1)); sel(b)
+o,r=start(m.DESSIN_OT_orient3pt); r=E(o,('c',0,0),('c',2,0),('c',4,0)); C.view_layer.update()
+chk("Orient3Pt : 3e point aligné sur les deux premiers -> refusé, la commande attend un autre point", len(o.points)==2, len(o.points))
+E(o,'ESC'); C.view_layer.update()
+chk("Orient3Pt puis Échap : l'objet revient à sa place", (b.matrix_world.translation-Vector((-20,-20,1))).length<1e-6 and len(bpy.data.objects)==1)
+clear(); b=box(size=2,loc=(-20,-20,1)); sel(b)
+o,r=start(m.DESSIN_OT_orient3pt); r=E(o,'C',('c',0,0),('c',2,0),('c',0,2),('c',10,0),('c',10,5),('c',5,0)); C.view_layer.update()
+cp=[q for q in bpy.data.objects if q is not b]
+chk("Orient3Pt + C (copie) : l'original reste, une copie est orientée", len(cp)==1 and (b.matrix_world.translation-Vector((-20,-20,1))).length<1e-6
+    and (cp[0].matrix_world.translation-Vector((30,-20,1))).length<1e-4, len(bpy.data.objects))
+clear(); box(size=2,loc=(-20,-20,1)); C.view_layer.update()
+def run_o3(): sel(bpy.data.objects["Box"]); o,r=start(m.DESSIN_OT_orient3pt); E(o,('c',0,0),('c',2,0),('c',0,2),('c',10,0),('c',10,5),('c',5,0))
+undo_redo("Orient 3 Points", run_o3)
 # ---------------- boutons de la barre d'outils et icônes des 11 commandes ----------------
 _tt={"pipe":"dessin.pipe","intersect":"dessin.intersect","section":"dessin.section","contour":"dessin.contour","extract_srf":"dessin.extract_srf",
-     "dup_border":"dessin.dup_border","dup_edge":"dessin.dup_edge","merge_faces":"dessin.merge_faces","unroll":"dessin.unroll",
-     "rebuild_srf":"dessin.rebuild_srf","orient":"dessin.orient"}
+     "dup_border":"dessin.dup_border","dup_edge":"dessin.dup_edge","dup_face_border":"dessin.dup_face_border","merge_faces":"dessin.merge_faces","unroll":"dessin.unroll",
+     "rebuild_srf":"dessin.rebuild_srf","orient":"dessin.orient","orient3pt":"dessin.orient3pt","extend_crv":"dessin.extend_crv"}
 _all=[c for g in m.RHINO_TOOLS.values() for c in g]
-chk("11 boutons, chacun avec son icône dessinée et sa commande", len(_all)==11 and sorted(c.dessin_icon for c in _all)==sorted(_tt)
+chk("14 boutons, chacun avec son icône dessinée et sa commande", len(_all)==14 and sorted(c.dessin_icon for c in _all)==sorted(_tt)
     and all(m.svg_icon_bytes(c.dessin_icon) for c in _all) and all(any(k[0]==_tt[c.dessin_icon] for k in c.bl_keymap) for c in _all),
     [(c.__name__,c.dessin_icon) for c in _all])
 chk("chaque icône appartient à une famille de couleurs", all(any(k in f for f in m.ICON_FAMILIES) for k in _tt), None)
@@ -310,8 +377,8 @@ def _ids(mode):
             for q in it: walk(q)
     walk(list(_TB._tools[mode])); return out
 _o=_ids('OBJECT'); _e=_ids('EDIT_MESH')
-chk("les 11 boutons sont dans la barre d'outils du mode Objet, une seule fois chacun", "dessin.untrim_tool" in _o and all(_o.count(c.bl_idname)==1 for c in _all), [c.bl_idname for c in _all if _o.count(c.bl_idname)!=1])
-chk("... et dans celle du mode Édition (variante)", sum(1 for c in _all if any(i and i.startswith(c.bl_idname) for i in _e))==11, [i for i in _e if i and ("pipe" in i or "orient" in i)])
+chk("les 14 boutons sont dans la barre d'outils du mode Objet, une seule fois chacun", "dessin.untrim_tool" in _o and all(_o.count(c.bl_idname)==1 for c in _all), [c.bl_idname for c in _all if _o.count(c.bl_idname)!=1])
+chk("... et dans celle du mode Édition (variante)", sum(1 for c in _all if any(i and i.startswith(c.bl_idname) for i in _e))==14, [i for i in _e if i and ("pipe" in i or "orient" in i)])
 m.unregister(); _o2=_ids('OBJECT')
 chk("désactiver l'add-on retire les 11 boutons", not any(c.bl_idname in _o2 for c in _all), [c.bl_idname for c in _all if c.bl_idname in _o2])
 m.register()

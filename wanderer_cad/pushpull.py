@@ -723,6 +723,14 @@ def pp_curve_loops(context, obj, face_index):
             t = np.clip(((q - A[None]) * ab).sum(-1) / np.where(ln > 0, ln, 1.0), 0.0, 1.0)
             d = np.sqrt((((A[None] + ab * t[..., None]) - q) ** 2).sum(-1)).min(axis=1)
             return bool((d <= tol * 10).all())
+        holes = [P for P in polys if P is not outer]
+
+        def near_ring(q, P):
+            """Le point est sur le contour P (une courbe posée arête contre arête sur le bord de la face, comme dans Rhino)."""
+            for a, b in zip(P, P[1:] + P[:1]):
+                if _seg_dist2(q, a, b) <= (tol * 10) ** 2:
+                    return True
+            return False
         inv = mw.inverted()
         dg = context.evaluated_depsgraph_get()
         out = []
@@ -738,10 +746,17 @@ def pp_curve_loops(context, obj, face_index):
                 if any(abs((q - o).dot(n)) > tol for q in L):
                     continue
                 Q2 = [((q - o).dot(u), (q - o).dot(w)) for q in L]
-                if on_boundary(Q2):
+                mids = [((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0) for a, b in zip(Q2, Q2[1:] + Q2[:1])]
+                if on_boundary(Q2 + mids):
+                    continue                          # posée exactement sur le pourtour existant (sommets et côtés)
+                if not all(_point_in_poly(q, outer) or near_ring(q, outer) for q in Q2):
+                    continue                          # sort de la face
+                inside = _loop_inner_point(Q2)
+                if inside is None or not _point_in_poly(inside, outer):
                     continue
-                if all(_point_in_poly(q, outer) for q in Q2):
-                    out.append([tuple(p) for p in P])
+                if any(_point_in_poly(inside, H) for H in holes):
+                    continue                          # posée dans un trou de la face
+                out.append([tuple(p) for p in P])
         return out
     finally:
         bm.free()
@@ -758,9 +773,77 @@ def _ring_edge(rings, e):
     return False
 
 
+def _seg_dist2(q, a, b):
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    ln = dx * dx + dy * dy
+    t = 0.0 if ln <= 0 else max(0.0, min(1.0, ((q[0] - ax) * dx + (q[1] - ay) * dy) / ln))
+    ex, ey = ax + dx * t - q[0], ay + dy * t - q[1]
+    return ex * ex + ey * ey
+
+
+def _signed_area(P):
+    return 0.5 * sum(P[i][0] * P[(i + 1) % len(P)][1] - P[(i + 1) % len(P)][0] * P[i][1] for i in range(len(P)))
+
+
+def _loop_inner_point(P):
+    """Un point à l'intérieur du polygone P (le centre du plus grand triangle de sa triangulation), ou None."""
+    if len(P) < 3:
+        return None
+    try:
+        tris = geometry.tessellate_polygon([[Vector((x, y, 0.0)) for x, y in P]])
+    except (ValueError, TypeError):
+        return None
+    best, area = None, 0.0
+    for t in tris:
+        (x0, y0), (x1, y1), (x2, y2) = P[t[0]], P[t[1]], P[t[2]]
+        ar = abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))
+        if ar > area:
+            best, area = ((x0 + x1 + x2) / 3.0, (y0 + y1 + y2) / 3.0), ar
+    return best
+
+
+def _planar_cycles(xy, edges):
+    """Faces d'un graphe plan (sommets 2D xy, arêtes (i, j) sans croisement) : (cycles directs, cycles indirects).
+    Chaque face bornée est un cycle à aire positive ; chaque composante connexe donne aussi son pourtour, à aire négative."""
+    adj = {}
+    for i, j in edges:
+        adj.setdefault(i, set()).add(j)
+        adj.setdefault(j, set()).add(i)
+    changed = True
+    while changed:                           # bouts qui pendent (une courbe qui ne ferme rien) : retirés
+        changed = False
+        for v in [v for v, n in adj.items() if len(n) < 2]:
+            for w in adj.pop(v):
+                if w in adj:
+                    adj[w].discard(v)
+            changed = True
+    order = {}
+    for v, ns in adj.items():
+        x0, y0 = xy[v]
+        order[v] = sorted(ns, key=lambda w: math.atan2(xy[w][1] - y0, xy[w][0] - x0))
+    used, pos, neg = set(), [], []
+    for v in adj:
+        for w in adj[v]:
+            if (v, w) in used:
+                continue
+            cyc, a, b = [], v, w
+            while (a, b) not in used:
+                used.add((a, b))
+                cyc.append(a)
+                ring = order[b]
+                k = ring.index(a)
+                a, b = b, ring[k - 1]              # le voisin suivant dans le sens horaire : la face reste à gauche
+            if len(cyc) >= 3:
+                (pos if _signed_area([xy[i] for i in cyc]) > 0 else neg).append(cyc)
+    return pos, neg
+
+
 def imprint_loops(obj, face_index, loops_world):
     """Découpe la face visée (et ses faces coplanaires) par des courbes fermées posées dessus : chaque zone devient une
-    région à part (arêtes marquées), que PushPull peut tirer ou pousser seule. Retourne True si c'est fait."""
+    région à part (arêtes marquées), que PushPull peut tirer ou pousser seule. Comme dans Rhino, une courbe peut toucher
+    le bord de la face (arête contre arête, dans un coin, par un sommet), le bord d'un trou, ou une autre courbe.
+    Retourne True si c'est fait."""
     me = obj.data
     bm = bmesh.new()
     try:
@@ -774,12 +857,23 @@ def imprint_loops(obj, face_index, loops_world):
         new_loops = [[inv @ Vector(p) for p in L] for L in loops_world]
         if not rings or not new_loops:
             return False
+        size = max(max(obj.dimensions), 1e-6)
+        eps = 1e-3 * max(1.0, size)
+        eps2 = eps * eps
+
+        def to2(co):
+            d = co - o
+            return (d.dot(u), d.dot(w))
+
+        def to3(p):
+            return o + u * p[0] + w * p[1]
         mat, smooth = faces[0].material_index, faces[0].smooth
+        ring_polys = [[to2(v.co) for v in r] for r in rings]
+        outer_i = max(range(len(rings)), key=lambda k: abs(_signed_area(ring_polys[k])))
+        hole_polys = [ring_polys[k] for k in range(len(rings)) if k != outer_i]
         inner_edges = {e for f in faces for e in f.edges}
         inner_verts = {v for f in faces for v in f.verts}
         bmesh.ops.delete(bm, geom=faces, context='FACES_ONLY')
-        # face faite de plusieurs facettes (triangulée, subdivisée) : ses arêtes et sommets intérieurs restaient orphelins
-        # (le solide n'était plus fermé) ; seul le contour est gardé
         ring_verts = {v for r in rings for v in r}
         loose = [e for e in inner_edges if e.is_valid and not e.link_faces
                  and not (e.verts[0] in ring_verts and e.verts[1] in ring_verts and _ring_edge(rings, e))]
@@ -788,41 +882,152 @@ def imprint_loops(obj, face_index, loops_world):
         lone = [v for v in inner_verts if v.is_valid and not v.link_edges and v not in ring_verts]
         if lone:
             bmesh.ops.delete(bm, geom=lone, context='VERTS')
-        vert_rings = [list(r) for r in rings] + [[bm.verts.new(q) for q in L] for L in new_loops]
-        flat = [[((v.co - o).dot(u), (v.co - o).dot(w)) for v in r] for r in vert_rings]
-        m_ = len(flat)
-        areas = [_poly_area2(P) for P in flat]
-        parent, depth = [], []
-        for i in range(m_):
-            cont = [j for j in range(m_) if j != i and areas[j] > areas[i] and _pip_np(flat[i][0], flat[j])]
-            depth.append(len(cont))
-            parent.append(min(cont, key=lambda j: areas[j]) if cont else None)
+
+        # sommets : ceux du pourtour, puis ceux des courbes (fusionnés avec un sommet existant tout proche)
+        xy, vert = [], []
+
+        def node(p, v=None):
+            for k, q in enumerate(xy):
+                if (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 <= eps2:
+                    if v is not None and vert[k] is None:
+                        vert[k] = v
+                    return k
+            xy.append(p)
+            vert.append(v)
+            return len(xy) - 1
+        segs = []                                 # (i, j, arête du pourtour ou None, vient d'une courbe)
+        for r in rings:
+            ids = [node(to2(v.co), v) for v in r]
+            for k in range(len(r)):
+                a, b = r[k], r[(k + 1) % len(r)]
+                segs.append((ids[k], ids[(k + 1) % len(r)], bm.edges.get((a, b)), False))
+        for L in new_loops:
+            ids = [node(to2(q)) for q in L]
+            ids = [i for k, i in enumerate(ids) if i != ids[k - 1]]
+            for k in range(len(ids)):
+                if ids[k] != ids[(k + 1) % len(ids)]:
+                    segs.append((ids[k], ids[(k + 1) % len(ids)], None, True))
+
+        # croisements entre segments : un sommet nouveau
+        def cross(p1, p2, p3, p4):
+            d = (p2[0] - p1[0]) * (p4[1] - p3[1]) - (p2[1] - p1[1]) * (p4[0] - p3[0])
+            if abs(d) < 1e-12:
+                return None
+            t = ((p3[0] - p1[0]) * (p4[1] - p3[1]) - (p3[1] - p1[1]) * (p4[0] - p3[0])) / d
+            s_ = ((p3[0] - p1[0]) * (p2[1] - p1[1]) - (p3[1] - p1[1]) * (p2[0] - p1[0])) / d
+            if 1e-9 < t < 1 - 1e-9 and 1e-9 < s_ < 1 - 1e-9:
+                return (p1[0] + (p2[0] - p1[0]) * t, p1[1] + (p2[1] - p1[1]) * t)
+            return None
+        n0 = len(segs)
+        for k in range(n0):
+            if not segs[k][3]:
+                continue
+            for m_ in range(n0):
+                if m_ == k or (segs[m_][3] and m_ < k):
+                    continue
+                i, j = segs[k][0], segs[k][1]
+                a, b = segs[m_][0], segs[m_][1]
+                if len({i, j, a, b}) < 4:
+                    continue
+                p = cross(xy[i], xy[j], xy[a], xy[b])
+                if p is not None:
+                    node(p)
+
+        # chaque segment est coupé aux sommets posés dessus (arête contre arête, coin, croisement)
+        sub = {}
+        for i, j, e, from_loop in segs:
+            pi, pj = xy[i], xy[j]
+            dx, dy = pj[0] - pi[0], pj[1] - pi[1]
+            ln = dx * dx + dy * dy
+            if ln <= eps2:
+                continue
+            on = []
+            for k, q in enumerate(xy):
+                if k in (i, j):
+                    continue
+                t = ((q[0] - pi[0]) * dx + (q[1] - pi[1]) * dy) / ln
+                if 0.0 < t < 1.0 and _seg_dist2(q, pi, pj) <= eps2:
+                    on.append((t, k))
+            on.sort()
+            chain = [i] + [k for _t, k in on] + [j]
+            if e is not None and e.is_valid and on:
+                # arête du pourtour : coupée dans le maillage, la face voisine (le flanc du solide) reçoit le sommet
+                cur, start = e, vert[i]
+                for t, k in on:
+                    if vert[k] is not None:
+                        continue
+                    edge_len = (cur.other_vert(start).co - start.co).length if start in cur.verts else 0.0
+                    if start not in cur.verts or edge_len <= 0:
+                        break
+                    target = to3(xy[k])
+                    fac = max(1e-6, min(1 - 1e-6, (target - start.co).length / edge_len))
+                    ne, nv = bmesh.utils.edge_split(cur, start, fac)
+                    nv.co = target
+                    vert[k] = nv
+                    # l'arête qui continue vers j est celle qui touche nv sans toucher start
+                    nxt = [x for x in nv.link_edges if start not in x.verts]
+                    cur, start = (nxt[0] if nxt else cur), nv
+            for a, b in zip(chain, chain[1:]):
+                if a == b:
+                    continue
+                key = (min(a, b), max(a, b))
+                sub[key] = sub.get(key, False) or from_loop
+        for k in range(len(xy)):
+            if vert[k] is None:
+                vert[k] = bm.verts.new(to3(xy[k]))
+
+        pos, neg = _planar_cycles(xy, list(sub))
+        if not pos:
+            return False
+        # une zone qui en touche une autre par un seul sommet a un pourtour qui repasse par ce sommet : il reste un seul
+        # polygone (triangulé tel quel), la boucle qui se referme dedans n'est pas un trou
+        outers, holes_of = pos, {}
+        polys = [[xy[i] for i in c] for c in outers]
+        areas = [_signed_area(P) for P in polys]
+        for h in neg:
+            hp = [xy[i] for i in h]
+            if abs(_signed_area(hp)) >= max(areas) - 1e-12:
+                continue                          # pourtour extérieur de la face : pas un trou
+            probe = _loop_inner_point(list(reversed(hp)))
+            if probe is None:
+                continue
+            cont = [k for k in range(len(outers)) if areas[k] > abs(_signed_area(hp)) and _point_in_poly(probe, polys[k])]
+            if cont:
+                holes_of.setdefault(min(cont, key=lambda k: areas[k]), []).append(h)
         made = []
-        outer_i = max(range(len(rings)), key=lambda k: areas[k])
-        existing_holes = {k for k in range(len(rings)) if k != outer_i}
-        for i in range(m_):
-            if i in existing_holes:
-                continue                     # trou d'origine de la face : il reste vide
-            holes = [j for j in range(m_) if parent[j] == i]
-            if not holes:
+        for k, c in enumerate(outers):
+            hs = holes_of.get(k, [])
+            rings_k = [c] + [list(reversed(h)) for h in hs]
+            pts = [[Vector((xy[i][0], xy[i][1], 0.0)) for i in r] for r in rings_k]
+            probe = _loop_inner_point(polys[k]) if not hs else None
+            if hs:
+                tris = geometry.tessellate_polygon(pts)
+                allv = [i for r in rings_k for i in r]
+                if not tris:
+                    continue
+                t0 = max(tris, key=lambda t: abs((xy[allv[t[1]]][0] - xy[allv[t[0]]][0]) * (xy[allv[t[2]]][1] - xy[allv[t[0]]][1])
+                                                 - (xy[allv[t[2]]][0] - xy[allv[t[0]]][0]) * (xy[allv[t[1]]][1] - xy[allv[t[0]]][1])))
+                probe = tuple(sum(xy[allv[t0[q]]][d] for q in range(3)) / 3.0 for d in range(2))
+            if probe is None or any(_point_in_poly(probe, H) for H in hole_polys):
+                continue                          # trou d'origine de la face : il reste vide
+            if not hs and len(set(c)) == len(c):
                 try:
-                    made.append(bm.faces.new(vert_rings[i]))
+                    made.append(bm.faces.new([vert[i] for i in c]))
                 except ValueError:
                     pass
                 continue
-            idx_rings = [i] + holes
-            polys = [[Vector((x, y, 0.0)) for x, y in flat[k]] for k in idx_rings]
-            tris = geometry.tessellate_polygon(polys)
-            allv = [v for k in idx_rings for v in vert_rings[k]]
+            if not hs:
+                tris = geometry.tessellate_polygon(pts)
+                allv = list(c)
             for t in tris:
                 try:
-                    made.append(bm.faces.new([allv[t[0]], allv[t[1]], allv[t[2]]]))
+                    made.append(bm.faces.new([vert[allv[t[0]]], vert[allv[t[1]]], vert[allv[t[2]]]]))
                 except ValueError:
                     pass
         lay = bm.edges.layers.int.get(IMPRINT_LAYER) or bm.edges.layers.int.new(IMPRINT_LAYER)
-        for r in vert_rings[len(rings):]:
-            for a, b in zip(r, r[1:] + r[:1]):
-                e = bm.edges.get((a, b))
+        for (a, b), from_loop in sub.items():
+            if from_loop:
+                e = bm.edges.get((vert[a], vert[b]))
                 if e is not None:
                     e[lay] = 1
         bm.normal_update()

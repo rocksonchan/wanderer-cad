@@ -352,10 +352,48 @@ def active_view_name(context):
                        or abs(v.dist - rv3d.view_distance) > 1e-3 * max(1.0, v.dist)):
             continue
         return v.name
-    if persp:
-        return "Perspective"
-    axis = detect_axis(rot)
-    return next((n for n, a in BASE_VIEWS if a == axis), None) if axis else None
+    axis = detect_axis(rot)            # vue alignée, même en perspective (« Right Perspective » de Blender) : onglet Right
+    if axis is None:
+        return "Perspective"           # vue libre, en perspective ou en orthographique (l'onglet devient « Axonometric »)
+    return next((n for n, a in BASE_VIEWS if a == axis), None)
+
+
+OPPOSITE_VIEW = {"Front": "Back", "Back": "Front", "Top": "Bottom", "Bottom": "Top", "Right": "Left", "Left": "Right"}
+
+
+def tab_label(context, scene, name, active):
+    """Nom affiché d'un onglet. L'onglet « Perspective » s'appelle « Axonometric » quand la vue 3D libre est en
+    orthographique (vue actuelle, ou dernier état gardé quand on est dans une autre vue), sauf s'il a été renommé."""
+    if name == "Perspective" and name not in base_labels(scene):
+        if name == active:
+            _sp, rv3d, _r = view3d_targets(context)
+            ortho = rv3d is not None and rv3d.view_perspective == 'ORTHO' and detect_axis(rv3d.view_rotation) is None
+        else:
+            entry = find_view(scene, name)
+            ortho = entry is not None and not entry.persp and detect_axis(Quaternion_(entry.rot)) is None
+        if ortho:
+            return tr_label("Axonometric")
+    return view_label(scene, name)
+
+
+def view_tabs(context, scene, active):
+    """Onglets de vues [(vue, texte, actif)], comme les titres de fenêtres de Rhino : quand la vue actuelle n'a pas
+    d'onglet (Back, Bottom, Left...), l'onglet dans lequel on était prend son nom et reste allumé (Perspective -> Bottom),
+    puis reprend le sien dès qu'on clique sur un autre onglet. Sans onglet de départ connu : l'onglet de la vue opposée
+    (Front pour Back, Top pour Bottom, Right pour Left), sinon Perspective."""
+    names = tab_names(scene)
+    host = {}
+    if active is not None and active not in names:
+        mem = _VIEW_OF_AREA.get(context.area.as_pointer()) if getattr(context, "area", None) is not None else None
+        opp = OPPOSITE_VIEW.get(active)
+        h = mem if mem in names else (opp if opp in names else ("Perspective" if "Perspective" in names else None))
+        if h is not None:
+            host[h] = active
+    out = []
+    for n in names:
+        v = host.get(n, n)
+        out.append((v, tab_label(context, scene, v, active), v == active))
+    return out
 
 
 _VIEW_OF_AREA = {}   # viewport (pointeur de la zone) -> dernière vue nommée rappelée
@@ -368,14 +406,16 @@ def view_belongs(context, name):
         return False
     persp = rv3d.view_perspective != 'ORTHO'
     entry = find_view(context.scene, name)
+    axis = dict(BASE_VIEWS).get(name, "?")
+    if axis is None:                   # « Perspective » : la vue 3D libre (non alignée), quelle que soit sa projection
+        return detect_axis(rv3d.view_rotation) is None
     if entry is not None:
         if entry.persp != persp:
             return False
         return persp or detect_axis(rv3d.view_rotation) == detect_axis(Quaternion_(entry.rot))
-    axis = dict(BASE_VIEWS).get(name, "?")
     if axis == "?":
         return False
-    return persp if axis is None else (not persp and detect_axis(rv3d.view_rotation) == axis)
+    return detect_axis(rv3d.view_rotation) == axis       # Front, Right... en orthographique ou en perspective
 
 
 def current_view_name(context):
@@ -399,6 +439,8 @@ def save_into_view(context, name):
         entry.name = name
         entry.base = True
     store_view(entry, rv3d, space)
+    if dict(BASE_VIEWS).get(name):    # Top, Front, Right... se rouvrent toujours en orthographique, comme dans Rhino
+        entry.persp = False
 
 
 def Vector_(v):
@@ -466,8 +508,8 @@ def named_views_header(self, context):
     layout = self.layout
     active = current_view_name(context)
     row = layout.row(align=False)          # boutons séparés aux coins arrondis, comme Global / Mix
-    for name in tab_names(context.scene):
-        row.operator(DESSIN_OT_view_restore.bl_idname, text=view_label(context.scene, name), depress=(name == active)).name = name
+    for name, text, on in view_tabs(context, context.scene, active):
+        row.operator(DESSIN_OT_view_restore.bl_idname, text=text, depress=on).name = name
     row.popover(DESSIN_PT_named_views.bl_idname, text="", icon='ADD')
     if pref("cmd_line"):
         row.operator(DESSIN_OT_command_line.bl_idname, text="", icon='CONSOLE')
@@ -481,6 +523,7 @@ CMD_KEY_ITEMS = (('SPACE', "Space", "Space opens the command line (Space again o
                  ('NONE', "None", "No key: click the command bar at the bottom of the viewport"))
 CMD_ALIASES = {
     "layout_detail_tool": "viewport mview mv vports detail",
+    "detail_callout_tool": "detailview viewdetail dview",
     "deplacer_tool": "m move", "copier_tool": "co cp copy", "selection_boite_tool": "select sel", "selection_lasso_tool": "lasso", "selection_rect_tool": "selbox", "selection_cercle_tool": "selcircle",
     "polyligne_tool": "pl l line polyline", "plan_tool": "plane srf", "rotation_tool": "ro rot rotate", "echelle_tool": "sc scale",
     "echelle_2d_tool": "s2 scale2d", "echelle_1d_tool": "s1 scale1d", "echelle_taille_tool": "ss scalesize scaletosize", "rectangle_tool": "rec rect", "mirror_tool": "mi mirror",
@@ -500,7 +543,7 @@ CMD_ALIASES = {
     "pipe_tool": "pipe", "intersect_tool": "int intersect", "section_tool": "sec section", "contour_tool": "contour",
     "extract_srf_tool": "extractsrf", "dup_border_tool": "dupborder", "dup_edge_tool": "dupedge", "dup_face_border_tool": "dupfaceborder", "extend_crv_tool": "extend ex extendcrv extendcurve lengthen",
     "merge_faces_tool": "mergeallfaces mergeallcoplanarfaces", "unroll_tool": "unroll unrollsrf",
-    "rebuild_srf_tool": "rebuildsrf", "orient_tool": "orient orient2pt",
+    "rebuild_srf_tool": "rebuildsrf", "orient_tool": "orient orient2pt", "orient3pt_tool": "orient3pt o3pt",
 }
 
 

@@ -46,20 +46,20 @@ for x in (3, 6, 11):
     send(o, 'MOUSEMOVE', 'NOTHING', x, 0)
     steps.append((round(b.matrix_world.translation.x, 3), arrows()[0][0]))
 chk("pendant le glisser : l'objet suit la souris (x = 2, 5, 10)...", [s[0] for s in steps] == [2.0, 5.0, 10.0], [s[0] for s in steps])
-chk("... et les flèches restent à leur place de départ (elles partaient avec l'objet)", all(s[1] == (0, 0, 1) for s in steps), [s[1] for s in steps])
+chk("... et le Gumball l'accompagne, comme dans Rhino (flèches en x = 2, 5, 10)", [s[1] for s in steps] == [(2, 0, 1), (5, 0, 1), (10, 0, 1)], [s[1] for s in steps])
 r = send(o, 'LEFTMOUSE', 'RELEASE', 11, 0)
 P1, D1, H1 = arrows()
 chk("relâchement : l'opération est validée, les flèches rejoignent l'objet en (10, 0, 1)", 'FINISHED' in r and m.gumball_frozen(ctx) is None and P1 == [(10, 0, 1)] * 3 and abs(b.matrix_world.translation.x - 10) < 1e-6, (r, P1))
 o, r = op('MOVE', 1, 10, 1); send(o, 'MOUSEMOVE', 'NOTHING', 10, 7); mid = arrows()[0][0]; y_mid = round(b.matrix_world.translation.y, 3)
 r = send(o, 'ESC', 'PRESS', 10, 7)
-chk("Échap pendant le glisser : l'objet revient, les poignées sont libérées, toujours en (10, 0, 1)", 'CANCELLED' in r and y_mid == 6.0 and mid == (10, 0, 1) and m.gumball_frozen(ctx) is None and arrows()[0] == [(10, 0, 1)] * 3
+chk("Échap pendant le glisser (le Gumball avait suivi en y = 6) : l'objet revient, les poignées aussi, en (10, 0, 1)", 'CANCELLED' in r and y_mid == 6.0 and mid == (10, 6, 1) and m.gumball_frozen(ctx) is None and arrows()[0] == [(10, 0, 1)] * 3
     and abs(b.matrix_world.translation.y) < 1e-6, (r, y_mid, mid))
 o, r = op('MOVE', 0, 11, 0); send(o, 'LEFTMOUSE', 'RELEASE', 11, 0)
 for ch, k in (('4', 'FOUR'),): send(o, k, 'PRESS', 11, 0, unicode=ch, ascii=ch)
 typing = (round(b.matrix_world.translation.x, 3), arrows()[0][0])
 r = send(o, 'RET', 'PRESS', 11, 0)
-chk("clic sans glisser puis valeur tapée (4) : pendant la saisie l'objet avance déjà, les flèches attendent ; Entrée : elles le rejoignent",
-    typing == (14.0, (10, 0, 1)) and 'FINISHED' in r and arrows()[0] == [(14, 0, 1)] * 3, (typing, r, arrows()[0][0]))
+chk("clic sans glisser puis valeur tapée (4) : pendant la saisie rien ne bouge (Rhino) ; Entrée : l'objet et le Gumball avancent de 4",
+    typing == (10.0, (10, 0, 1)) and 'FINISHED' in r and arrows()[0] == [(14, 0, 1)] * 3, (typing, r, arrows()[0][0]))
 
 # ================= 2. Rotation et échelle =================
 SEC = "rotation, échelle"
@@ -69,7 +69,8 @@ P0, D0, H0 = arrows()
 o, r = op('ROTATE', 2, 6, 0); send(o, 'MOUSEMOVE', 'NOTHING', 4, 3, shift=not m.pref("gumball_rot90"))
 ang = round(math.degrees(b.matrix_world.to_euler().z), 1)
 P1, D1, H1 = arrows()
-chk("rotation autour de Z, orientation Local : l'objet tourne (90°), mais les axes des poignées ne tournent pas pendant le glisser", abs(ang) == 90.0 and D1 == D0 and P1 == P0, (ang, D1[0], D0[0]))
+_rot = [r3(Matrix.Rotation(math.radians(ang), 3, 'Z') @ Vector(d)) for d in D0]
+chk("rotation autour de Z, orientation Local : l'objet tourne (90°), et les axes du Gumball tournent avec lui (Rhino)", abs(ang) == 90.0 and D1 == _rot and P1 == P0, (ang, D1[0], D0[0]))
 r = send(o, 'LEFTMOUSE', 'RELEASE', 4, 3); P2, D2, H2 = arrows()
 chk("relâchement : les axes des poignées suivent maintenant l'objet tourné", 'FINISHED' in r and D2 != D0 and abs(D2[0][0]) < 1e-3 and abs(D2[0][1]) > 1, (D2[0], D0[0]))
 slot.type = keep_or
@@ -145,7 +146,7 @@ chk("clic au milieu du carré entre X et Y : déplacement dans le plan XY", hit(
 o, r = op('PLANE', 2, mid, mid)
 chk("le déplacement démarre, les poignées sont figées", 'RUNNING_MODAL' in r and m.gumball_frozen(ctx) is not None, r)
 send(o, 'MOUSEMOVE', 'NOTHING', mid + 5, mid + 3); loc = r3(b.matrix_world.translation); lab = o.label()
-chk("glisser de (5, 3) : l'objet suit dans le plan XY, sans changer de hauteur ; les poignées attendent", loc == (5, 3, 1) and arrows()[0] == [(0, 0, 1)] * 3 and "XY plane" in lab, (loc, lab))
+chk("glisser de (5, 3) : l'objet suit dans le plan XY, sans changer de hauteur ; le Gumball l'accompagne", loc == (5, 3, 1) and arrows()[0] == [(5, 3, 1)] * 3 and "XY plane" in lab, (loc, lab))
 r = send(o, 'LEFTMOUSE', 'RELEASE', mid + 5, mid + 3)
 chk("relâchement : validé, les poignées rejoignent l'objet", 'FINISHED' in r and arrows()[0] == [(5, 3, 1)] * 3 and r3(b.matrix_world.translation) == (5, 3, 1), (r, arrows()[0][0]))
 o, r = op('PLANE', 2, 5 + mid, 3 + mid); r = send(o, 'LEFTMOUSE', 'RELEASE', 5 + mid, 3 + mid)
@@ -160,5 +161,33 @@ o, r = op('PLANE', 2, 5 + mid, 3 + mid); send(o, 'MOUSEMOVE', 'NOTHING', 5 + mid
 bm = bmesh.from_edit_mesh(b.data); z1 = sorted(round((b.matrix_world @ v.co).x, 3) for v in bm.verts)
 chk("mode Édition : les sommets sélectionnés se déplacent dans le plan (+2 en X)", 'FINISHED' in r and all(abs(q - p - 2) < 1e-4 for p, q in zip(z0, z1)), (z0[:2], z1[:2]))
 bpy.ops.object.mode_set(mode='OBJECT')
+
+# ================= Bulle de saisie (clic sur une poignée, puis on tape la valeur) =================
+SEC = "bulle"
+clear(); b = cube()
+o, r = op('MOVE', 1, 0, 3); send(o, 'LEFTMOUSE', 'RELEASE', 0, 3)
+d = m._VBUBBLE["data"]
+chk("clic sans glisser sur la flèche Y : la bulle s'ouvre, « Distance to move in Y », Y dans la couleur de l'axe",
+    d is not None and "".join(t for t, _c, _b in d[1]) == "Distance to move in Y" and d[1][1][1] is not None and d[2] == "", d and d[1])
+g = Group(); m.DESSIN_GGT_gumball.place(g, ctx)
+chk("pendant la saisie, seules les flèches de déplacement restent (comme Rhino)", not any(z.hide for z in g.gz_move) and all(z.hide for z in g.gz_scale + g.gz_rot + getattr(g, "gz_plane", [])),
+    ([z.hide for z in g.gz_scale], [z.hide for z in g.gz_rot]))
+t0 = m._VBUBBLE["t0"]
+chk("petite animation d'apparition : elle commence à 0, finit à 1 en un peu plus d'un dixième de seconde", m.vbubble_pop(t0) == 0.0 and 0 < m.vbubble_pop(t0 + 0.05) < 1 and m.vbubble_pop(t0 + m.VBUBBLE_POP) == 1.0)
+for ch, k in (('2', 'TWO'), ('5', 'FIVE')): send(o, k, 'PRESS', 0, 3, unicode=ch, ascii=ch)
+chk("... ce qu'on tape s'y affiche (25), sans unité", m._VBUBBLE["data"] is not None and m._VBUBBLE["data"][2] == "25", m._VBUBBLE["data"] and m._VBUBBLE["data"][2])
+r = send(o, 'RET', 'PRESS', 0, 3)
+chk("Entrée : la valeur est appliquée et la bulle se ferme", 'FINISHED' in r and m._VBUBBLE["data"] is None and m._VBUBBLE["handle"] is None, r)
+o, r = op('ROTATE', 2, 6, 0); send(o, 'LEFTMOUSE', 'RELEASE', 6, 0)
+chk("rotation : « Angle to rotate around Z »", m._VBUBBLE["data"] is not None and "".join(t for t, _c, _b in m._VBUBBLE["data"][1]) == "Angle to rotate around Z")
+r = send(o, 'ESC', 'PRESS', 6, 0)
+chk("Échap : la bulle se ferme", m._VBUBBLE["data"] is None)
+o, r = op('MOVE', 0, 3, 0); send(o, 'LEFTMOUSE', 'RELEASE', 3, 0)
+x0 = round(b.matrix_world.translation.x, 3)
+for ch, k in (('7', 'SEVEN'),): send(o, k, 'PRESS', 3, 0, unicode=ch, ascii=ch)
+r = send(o, 'LEFTMOUSE', 'PRESS', 30, 30)
+g = Group(); m.DESSIN_GGT_gumball.place(g, ctx)
+chk("clic ailleurs pendant la saisie : abandon (l'objet n'a pas bougé), le clic agit ensuite normalement, le Gumball redevient complet",
+    'CANCELLED' in r and 'PASS_THROUGH' in r and round(b.matrix_world.translation.x, 3) == x0 and m._VBUBBLE["data"] is None and not any(z.hide for z in g.gz_rot), (r, round(b.matrix_world.translation.x, 3), x0))
 
 summary()

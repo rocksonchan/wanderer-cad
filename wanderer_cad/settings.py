@@ -238,6 +238,17 @@ def _hatch_prop_update(self, context):
         _HATCH_EDIT["busy"] = False
 
 
+
+def _redraw_bars():
+    try:
+        for win in bpy.context.window_manager.windows:
+            for area in win.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+    except (AttributeError, RuntimeError, ReferenceError):
+        pass
+
+
 class DESSIN_PG_hatch(bpy.types.PropertyGroup):
     pattern: bpy.props.EnumProperty(name="Pattern", items=HATCH_PATTERN_ITEMS, default='HATCH1', update=_hatch_prop_update)
     scale: bpy.props.FloatProperty(name="Scale", default=1.0, min=0.01, soft_max=20.0, update=_hatch_prop_update,
@@ -343,6 +354,10 @@ class DESSIN_PG_settings(bpy.types.PropertyGroup):
     auto_cplane: bpy.props.BoolProperty(
         name="Auto CPlane", default=False,
         description="The construction plane follows the planar object (Object mode) or the planar faces (Edit mode) you select, so you can draw on them")
+    show_bars: bpy.props.BoolProperty(
+        name="Wanderer bars", default=True, update=lambda self, ctx: _redraw_bars(),
+        description="Show or hide the three Wanderer bars at the bottom of the 3D view: view tabs, command line and modes "
+                    "(Grid Snap, Ortho, OSnap...). Hidden, the command line comes back while you type a command")
     auto_cplane_hover: bpy.props.BoolProperty(
         name="Face under the cursor", default=True,
         description="Auto CPlane: while a drawing tool waits for its first point, the construction plane sits on the flat face "
@@ -469,6 +484,12 @@ class DESSIN_PG_settings(bpy.types.PropertyGroup):
     hatch_boundary: bpy.props.BoolProperty(name="Boundary", default=False,
                                            description="Hatch Region also creates the boundary curves of the area")
     dim_style_index: bpy.props.IntProperty(default=0, update=_dimstyle_index_update)
+
+
+# état plié / déplié des groupes du panneau Wanderer > Tools (déplié par défaut ; boutons « tout déplier / tout plier »)
+TOOLBOX_GROUPS = 16
+for _i in range(TOOLBOX_GROUPS):
+    DESSIN_PG_settings.__annotations__[f"tb_open_{_i}"] = bpy.props.BoolProperty(name="Open", default=True)
 
 
 def cotation_collection(context):

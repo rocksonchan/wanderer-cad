@@ -61,6 +61,10 @@ class DESSIN_TT_selection_boite(bpy.types.WorkSpaceTool):
         ("dessin.select_loop", {"type": 'LEFTMOUSE', "value": 'DOUBLE_CLICK', "any": True}, None),
         ("dessin.selection_boite", {"type": 'LEFTMOUSE', "value": 'PRESS', "any": True}, None),
         ("dessin.deselect", {"type": 'ESC', "value": 'PRESS'}, None),
+        # Alt maintenu : la poignée du Gumball sous la souris s'éclaire (Blender ne le fait plus avec Alt)
+        ("dessin.gumball_alt_hover", {"type": 'MOUSEMOVE', "value": 'ANY', "alt": True}, None),
+        ("dessin.gumball_alt_hover", {"type": 'LEFT_ALT', "value": 'ANY', "any": True}, None),
+        ("dessin.gumball_alt_hover", {"type": 'RIGHT_ALT', "value": 'ANY', "any": True}, None),
     )
 
     def draw_settings(context, layout, tool):
@@ -435,8 +439,8 @@ DESSIN_TT_cotation.draw_settings = _cotation_settings
 
 DESSIN_TT_cotation_rayon = _draw_tool_cls(
     "DESSIN_TT_cotation_rayon", "dessin.cotation_rayon_tool", "dessin.cotation_rayon", "Radius / Diameter",
-    "Radius or diameter dimension: click a circle or an arc, then the position of the dimension (D: radius / diameter)",
-    "Click a circle or an arc, then the dimension position  ·  D: radius / diameter")
+    "Radius or diameter dimension: click a circle, an arc or a fillet (rounded corner), then the position of the dimension (D: radius / diameter)",
+    "Click a circle, an arc or a fillet, then the dimension position  ·  D: radius / diameter")
 DESSIN_TT_cotation_rayon.draw_settings = _cotation_settings
 DESSIN_TT_cotation_angle = _draw_tool_cls(
     "DESSIN_TT_cotation_angle", "dessin.cotation_angle_tool", "dessin.cotation_angle", "Angular Dimension",
@@ -1031,6 +1035,11 @@ DESSIN_TT_orient = _draw_tool_cls(
     "DESSIN_TT_orient", "dessin.orient_tool", "dessin.orient", "Orient",
     "Like Orient (2 points): moves and rotates the selection so that two reference points land on two target points (D: also scale, C: copy)",
     "Select the objects  ·  2 reference points, then 2 target points  ·  D: scale to the target length  ·  C: copy")
+DESSIN_TT_orient3pt = _draw_tool_cls(
+    "DESSIN_TT_orient3pt", "dessin.orient3pt_tool", "dessin.orient3pt", "Orient 3 Points",
+    "Like Orient3Pt: moves and rotates the selection from one plane to another: three reference points (origin, X direction, side of the plane), then three target points. The size does not change (C: copy)",
+    "Select the objects  ·  3 reference points, then 3 target points  ·  C: copy")
+DESSIN_TT_orient3pt._in_group = True  # menu déroulant d'Orient
 DESSIN_TT_extend_crv = _draw_tool_cls(
     "DESSIN_TT_extend_crv", "dessin.extend_crv_tool", "dessin.extend_crv", "Extend Curve",
     "Like Extend: click near the end of a curve, then give its new end: click, type a length, or Enter to stop at the next curve, edge or surface. The curve keeps its shape",
@@ -1039,12 +1048,12 @@ DESSIN_TT_extend_crv.dessin_icon = "extend_crv"
 for _t, _k in ((DESSIN_TT_pipe, "pipe"), (DESSIN_TT_intersect, "intersect"), (DESSIN_TT_section, "section"), (DESSIN_TT_contour, "contour"),
                (DESSIN_TT_extract_srf, "extract_srf"), (DESSIN_TT_dup_border, "dup_border"), (DESSIN_TT_dup_edge, "dup_edge"), (DESSIN_TT_dup_face_border, "dup_face_border"),
                (DESSIN_TT_merge_faces, "merge_faces"), (DESSIN_TT_unroll, "unroll"), (DESSIN_TT_rebuild_srf, "rebuild_srf"),
-               (DESSIN_TT_orient, "orient")):
+               (DESSIN_TT_orient, "orient"), (DESSIN_TT_orient3pt, "orient3pt")):
     _t.dessin_icon = _k
 # famille de la barre d'outils -> boutons ajoutés à la fin de cette famille
 RHINO_TOOLS = {
     "curves": [DESSIN_TT_intersect, DESSIN_TT_section, DESSIN_TT_contour, DESSIN_TT_dup_border, DESSIN_TT_dup_face_border, DESSIN_TT_dup_edge],
-    "transform": [DESSIN_TT_orient],
+    "transform": [DESSIN_TT_orient, DESSIN_TT_orient3pt],
     "modify": [DESSIN_TT_extend_crv, DESSIN_TT_merge_faces],
     "srf_edit": [DESSIN_TT_extract_srf, DESSIN_TT_unroll, DESSIN_TT_rebuild_srf],
     "solids": [DESSIN_TT_pipe],
@@ -1062,9 +1071,16 @@ DESSIN_TT_layout_detail = _draw_tool_cls(
     "Layout: draws a viewport of the model on the sheet (first corner, then opposite corner). Its view, scale and layers are set in the Layout panel",
     "On a layout: first corner then opposite corner of the viewport  ·  C: from center  ·  width, Tab, height + Enter")
 DESSIN_TT_layout_detail._in_group = True        # menu déroulant de Layout
+DESSIN_TT_detail_callout = _draw_tool_cls(
+    "DESSIN_TT_detail_callout", "dessin.detail_callout_tool", "dessin.detail_callout", "Detail View",
+    "Layout: an enlarged view of a part of a viewport, like VIEWDETAIL in AutoCAD: draw a rectangle around the part, then click where the detail view goes. "
+    "The part is marked with a letter on the original viewport",
+    "On a layout: two corners around the part to enlarge (inside a viewport)  ·  then the position of the detail view")
+DESSIN_TT_detail_callout._in_group = True       # menu déroulant de Layout
 DESSIN_TT_layout.dessin_icon = "layout"
 DESSIN_TT_layout_detail.dessin_icon = "detail"
-LAYOUT_TOOLS = [DESSIN_TT_layout, DESSIN_TT_layout_detail]     # à la fin de la famille Annotation de la barre
+DESSIN_TT_detail_callout.dessin_icon = "callout"
+LAYOUT_TOOLS = [DESSIN_TT_layout, DESSIN_TT_layout_detail, DESSIN_TT_detail_callout]     # à la fin de la famille Annotation de la barre
 
 # ordre dans la barre d'outils (un séparateur avant chaque famille)
 # Polyline, Control Point Curve, Interpolate Curve, Pen et Sketch : côte à côte dans la barre, sans menu déroulant

@@ -22,7 +22,7 @@ v,ar,nk,nm=vol_area(bpy.data.objects["A"]); exp=64-0.5*0.5/2*4
 rec(SEC,"Chamfer Edge 0.5 : volume exact (prisme retiré 0.5 x 0.5 / 2 x 4)",abs(v-exp)<1e-5 and nk==0,f"{v:.6f} vs {exp:.6f}")
 # Offset Edge sur un cercle
 clear(); ci=m.build_bezier_arc(bpy.context,"Ci",V3(12,0,0),V3(1,0,0),V3(0,1,0),3.0,0.0,m.TAU,True); bpy.context.view_layer.update()
-new,r,o=run("offset_edge",[C(15,0),'RET',M(17,0),T(1.25),'RET'])
+new,r,o=run("offset_edge",[C(15,0),'RET',M(17,0),T(1.25),'RET'],sel=[])
 if new:
     ob=new[0]
     P=bez_eval(ob) if ob.type=='CURVE' and ob.data.splines[0].type=='BEZIER' else np.vstack([p for p,c in paths(ob)])
@@ -31,14 +31,14 @@ if new:
 else: rec(SEC,"Offset cercle",False,str((r,o._reports)))
 # Extrude Curve d'un cercle : hauteur tapée
 clear(); R=m.build_polyline(bpy.context,"R",[V3(0,0,0),V3(8,0,0),V3(8,5,0),V3(0,5,0)],True); bpy.context.view_layer.update()
-new,r,o=run("offset_edge",[C(4,0),'RET',M(4,-2),T(1),'RET'])
+new,r,o=run("offset_edge",[C(4,0),'RET',M(4,-2),T(1),'RET'],sel=[])
 if new:
     P=ctrl_pts(new[0])[0]; mn,mx=bbox(P)
     rec(SEC,"Offset d'un rectangle 8x5 de 1 vers l'extérieur",near((mx-mn)[:2],(10,7),1e-6) or near((mx-mn)[:2],(6,3),1e-6),f"{tuple(np.round((mx-mn)[:2],7))} ({len(P)} sommets)")
 else: rec(SEC,"Offset rectangle",False,str((r,o._reports)))
 summary()
 clear(); ar=m.build_bezier_arc(bpy.context,"Ar",V3(0,0,0),V3(1,0,0),V3(0,1,0),5.0,math.radians(20),math.radians(100),False); bpy.context.view_layer.update()
-new,r,o=run("offset_edge",[C(0,5),'RET',M(0,7),T(1.5),'RET'])
+new,r,o=run("offset_edge",[C(0,5),'RET',M(0,7),T(1.5),'RET'],sel=[])
 if new:
     ob=new[0]; B=bez_eval(ob); rr=np.linalg.norm(B,axis=1); P=ctrl_pts(ob)[0]; a0=math.degrees(math.atan2(P[0][1],P[0][0])); a1=math.degrees(math.atan2(P[-1][1],P[-1][0]))
     rec(SEC,"Offset d'un arc r=5 (20°..120°) de 1.5 : arc vrai r=6.5, mêmes angles",ob.data.splines[0].type=='BEZIER' and abs(rr-6.5).max()<1e-4 and abs(min(a0,a1)-20)<1e-4 and abs(max(a0,a1)-120)<1e-4,f"type {ob.data.splines[0].type}, rayon {rr.min():.6f}..{rr.max():.6f}, angles {min(a0,a1):.5f}..{max(a0,a1):.5f}, centre {tuple(ob.get('dessin_centre') or ())}")

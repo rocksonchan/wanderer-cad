@@ -3,7 +3,7 @@
 import bpy
 import os
 
-from .core import PREF_DEFAULTS, pref_applied_language
+from .core import PREF_DEFAULTS, lang, pref_applied_language
 from .snapping import _perf_caches_clear
 from .drawing import _HOVER
 from .icons import ICON_PALETTES
@@ -47,191 +47,6 @@ class DESSIN_OT_prefs_reset(bpy.types.Operator):
         if prefs.icon_palette != palette_before:
             _reload_addon_later()
         self.report({'INFO'}, "Wanderer settings reset")
-        return {'FINISHED'}
-
-
-class DESSIN_OT_theme_reset(bpy.types.Operator):
-    bl_idname = "dessin.theme_reset"
-    bl_label = "Reset to Blender Default"
-    bl_description = ("Restores Blender's default theme and Wanderer's default toolbar icon colors; "
-                      "other add-on settings and keyboard shortcuts are kept")
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        result = bpy.ops.preferences.reset_default_theme()
-        if 'FINISHED' not in result:
-            return result
-        prefs = context.preferences.addons[__package__].preferences
-        if prefs.icon_palette != PREF_DEFAULTS["icon_palette"]:
-            prefs.icon_palette = PREF_DEFAULTS["icon_palette"]
-        for window in context.window_manager.windows:
-            for area in window.screen.areas:
-                area.tag_redraw()
-        self.report({'INFO'}, "Blender theme and Wanderer icon colors reset to defaults")
-        return {'FINISHED'}
-
-
-THEME_BACKUP = "Theme_before_Wanderer"          # affiché « Theme before Wanderer » dans Preferences > Themes
-THEME_BACKUP_OLDER = "Theme_before_Wanderer_older"
-
-
-def _rna_xml():
-    try:
-        import _rna_xml as mod          # Blender 5
-    except ImportError:
-        import rna_xml as mod           # Blender 4.2 à 4.5
-    return mod
-
-
-def _theme_dir(create=False):
-    """Dossier des thèmes de l'utilisateur (celui que liste Preferences > Themes)."""
-    return bpy.utils.user_resource('SCRIPTS', path=os.path.join("presets", "interface_theme"), create=create)
-
-
-def _theme_state_file():
-    try:
-        folder = bpy.utils.extension_path_user(__package__, path="", create=True)
-    except Exception:               # installé comme add-on classique (pas comme extension) : dossier de configuration
-        folder = bpy.utils.user_resource('CONFIG', path="wanderer_cad", create=True)
-    return os.path.join(folder, "theme_applied.sig")
-
-
-def theme_backup_path(older=False):
-    folder = _theme_dir()
-    return os.path.join(folder, (THEME_BACKUP_OLDER if older else THEME_BACKUP) + ".xml") if folder else ""
-
-
-def _theme_write(context, path):
-    """Écrit le thème affiché (couleurs et style du texte) dans un fichier de thème Blender."""
-    xml_map = bpy.types.USERPREF_MT_interface_theme_presets.preset_xml_map
-    _rna_xml().xml_file_write(context, path, xml_map)
-
-
-def _theme_signature(context):
-    """Empreinte du thème affiché, pour savoir s'il a changé depuis qu'un thème Wanderer a été appliqué."""
-    import hashlib
-    import tempfile
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(prefix="wd_theme_", suffix=".xml")
-        os.close(fd)
-        _theme_write(context, tmp)
-        with open(tmp, "rb") as f:
-            return hashlib.sha1(f.read()).hexdigest()
-    except Exception:
-        return None
-    finally:
-        if tmp:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-
-
-def theme_backup(context):
-    """Avant d'appliquer un thème Wanderer : garde le thème affiché sous « Theme before Wanderer », sauf si c'est déjà un
-    thème Wanderer resté tel quel (la sauvegarde contient alors toujours le thème d'origine). Une sauvegarde plus ancienne
-    est gardée sous « Theme before Wanderer older ». Retourne True si une sauvegarde vient d'être écrite."""
-    try:
-        sig = _theme_signature(context)
-        if sig is None:
-            return False
-        applied = ""
-        try:
-            with open(_theme_state_file(), "r", encoding="utf-8") as f:
-                applied = f.read().strip()
-        except OSError:
-            pass
-        if sig == applied:
-            return False
-        folder = _theme_dir(create=True)
-        if not folder:
-            return False
-        path, older = theme_backup_path(), theme_backup_path(older=True)
-        if os.path.isfile(path):
-            try:
-                os.replace(path, older)
-            except OSError:
-                pass
-        _theme_write(context, path)
-        return os.path.isfile(path)
-    except Exception:
-        return False
-
-
-def _theme_mark_applied(context):
-    try:
-        sig = _theme_signature(context)
-        if sig:
-            with open(_theme_state_file(), "w", encoding="utf-8") as f:
-                f.write(sig)
-    except Exception:
-        pass
-
-
-class DESSIN_OT_restore_theme(bpy.types.Operator):
-    bl_idname = "dessin.restore_theme"
-    bl_label = "Restore my previous theme"
-    bl_description = ("Puts back the theme you had before applying a Wanderer theme (it was saved as « Theme before Wanderer », "
-                      "which is also listed in Preferences > Themes)")
-    bl_options = {'REGISTER'}
-
-    @classmethod
-    def poll(cls, context):
-        p = theme_backup_path()
-        return bool(p) and os.path.isfile(p)
-
-    def execute(self, context):
-        path = theme_backup_path()
-        try:
-            res = bpy.ops.script.execute_preset(filepath=path, menu_idname="USERPREF_MT_interface_theme_presets")
-        except RuntimeError as e:
-            self.report({'ERROR'}, "Could not restore the theme: " + str(e))
-            return {'CANCELLED'}
-        if 'FINISHED' not in res:
-            return {'CANCELLED'}
-        self.report({'INFO'}, "Previous theme restored")
-        return {'FINISHED'}
-
-
-THEME_DARK = (('BLUEPRINT', "Blueprint"), ('CARBON', "Carbon"), ('MIDNIGHT', "Midnight"))
-THEME_LIGHT = (('GRAPHITE', "Graphite"), ('VELLUM', "Vellum"), ('IVORY', "Ivory"))
-THEME_NAMES = THEME_DARK + THEME_LIGHT
-
-
-class DESSIN_OT_install_theme(bpy.types.Operator):
-    bl_idname = "dessin.install_theme"
-    bl_label = "Install theme"
-    bl_description = "Installs and applies the theme (dark blue-gray « Blueprint », light « Vellum », neutral gray with a light viewport « Graphite » like the Rhino interface, near-black « Carbon », deep blue « Midnight » or warm paper « Ivory »). It changes Blender's colors and rounds the toolbar. Your current theme is saved first as « Theme before Wanderer »: use « Restore my previous theme » here, or pick it in Preferences > Themes, to go back"
-    bl_options = {'REGISTER'}
-
-    which: bpy.props.EnumProperty(items=(('BLUEPRINT', "Wanderer Blueprint", "Dark theme"), ('VELLUM', "Wanderer Vellum", "Light theme"),
-                                           ('GRAPHITE', "Wanderer Graphite", "Neutral gray panels and a light viewport, like the Rhino interface"),
-                                           ('CARBON', "Wanderer Carbon", "Near-black neutral gray, the darkest"),
-                                           ('MIDNIGHT', "Wanderer Midnight", "Deep blue night, the dark version of Blueprint"),
-                                           ('IVORY', "Wanderer Ivory", "Warm paper and brown ink, the softest on the eyes")),
-                                  default='BLUEPRINT', options={'SKIP_SAVE'})
-
-    def execute(self, context):
-        name = {'BLUEPRINT': "Wanderer_Blueprint", 'VELLUM': "Wanderer_Vellum", 'GRAPHITE': "Wanderer_Graphite",
-                'CARBON': "Wanderer_Carbon", 'MIDNIGHT': "Wanderer_Midnight", 'IVORY': "Wanderer_Ivory"}[self.which]
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes", name + ".xml")
-        if not os.path.isfile(path):
-            self.report({'ERROR'}, "Theme file not found: " + path)
-            return {'CANCELLED'}
-        saved = theme_backup(context)        # le thème en place n'est jamais perdu, même s'il n'était pas enregistré
-        try:
-            res = bpy.ops.preferences.theme_install(filepath=path, overwrite=True)
-        except RuntimeError as e:
-            self.report({'ERROR'}, "Could not install the theme: " + str(e))
-            return {'CANCELLED'}
-        if 'FINISHED' not in res:
-            return {'CANCELLED'}
-        _theme_mark_applied(context)
-        msg = name.replace("_", " ") + " installed and applied"
-        if saved:
-            msg += " (your theme was saved as « Theme before Wanderer »)"
-        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -439,32 +254,44 @@ class DESSIN_OT_alias_edit(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# ---- préréglages : retrouver d'un clic ses habitudes de Rhino, d'AutoCAD ou de Blender ----
+# ---- préréglages : retrouver d'un clic ses habitudes de Rhino, d'AutoCAD, de 3ds Max ou de Blender ----
 # Deux blocs indépendants : la façon de travailler (navigation, souris, curseur, saisie des commandes) et l'apparence
 # (thème). On peut garder la façon de travailler de Blender avec l'apparence de Rhino, par exemple.
 
-PRESET_STYLES = (('RHINO', "Rhino"), ('AUTOCAD', "AutoCAD"), ('BLENDER', "Blender"))
+PRESET_STYLES = (('RHINO', "Rhino"), ('AUTOCAD', "AutoCAD"), ('MAX', "3ds Max"), ('BLENDER', "Blender"))
 _WORKFLOW_KEYS = ("nav_style", "cursor_style", "nav_zoom_cursor", "cmd_line", "cmd_type", "rclick_enter", "enter_last",
-                  "auto_idle", "esc_deselect")
+                  "auto_idle", "esc_deselect", "copy_key")
 WORKFLOW_PRESETS = {
-    # Rhino : le bouton droit tourne la vue, taper une lettre lance la ligne de commande, clic droit = Entrée
-    'RHINO': {"nav_style": 'RHINO', "cursor_style": 'RHINO', "nav_zoom_cursor": True, "cmd_line": True, "cmd_type": True,
-              "rclick_enter": True, "enter_last": True, "auto_idle": True, "esc_deselect": True},
-    # AutoCAD : le bouton du milieu déplace la vue, réticule, taper une lettre lance la ligne de commande
-    'AUTOCAD': {"nav_style": 'AUTOCAD', "cursor_style": 'AUTOCAD', "nav_zoom_cursor": True, "cmd_line": True, "cmd_type": True,
-                "rclick_enter": True, "enter_last": True, "auto_idle": True, "esc_deselect": True},
+    # Rhino : le bouton droit tourne la vue, clic droit = Entrée. Quick Type (taper une lettre lance la ligne de commande)
+    # reste éteint par défaut : les lettres gardent les raccourcis de Blender, Espace ouvre la ligne de commande ; on
+    # l'allume depuis la barre du bas (ou Maj + Q) quand on le veut
+    'RHINO': {"nav_style": 'RHINO', "cursor_style": 'RHINO', "nav_zoom_cursor": True, "cmd_line": True, "cmd_type": False,
+              "rclick_enter": True, "enter_last": True, "auto_idle": True, "esc_deselect": True, "copy_key": 'ALT'},
+    # AutoCAD : le bouton du milieu déplace la vue, réticule ; Quick Type éteint par défaut, comme pour Rhino
+    'AUTOCAD': {"nav_style": 'AUTOCAD', "cursor_style": 'AUTOCAD', "nav_zoom_cursor": True, "cmd_line": True, "cmd_type": False,
+                "rclick_enter": True, "enter_last": True, "auto_idle": True, "esc_deselect": True, "copy_key": 'ALT'},
+    # 3ds Max : le bouton du milieu déplace la vue (Alt + milieu tourne), zoom vers la souris, Maj + glisser copie ;
+    # un clic droit termine la commande, mais Entrée ne relance pas la précédente (ce n'est pas une habitude de 3ds Max)
+    'MAX': {"nav_style": 'MAX', "cursor_style": 'RHINO', "nav_zoom_cursor": True, "cmd_line": True, "cmd_type": False,
+            "rclick_enter": True, "enter_last": False, "auto_idle": True, "esc_deselect": True, "copy_key": 'SHIFT'},
     # Blender : navigation et raccourcis de Blender (les lettres gardent leur rôle ; Espace ouvre la ligne de commande)
     'BLENDER': {k: PREF_DEFAULTS[k] for k in _WORKFLOW_KEYS},
 }
-LOOK_PRESETS = {'RHINO': 'GRAPHITE', 'AUTOCAD': 'BLUEPRINT', 'BLENDER': None}      # thème appliqué (None : celui de l'utilisateur)
 PRESET_TIPS = {
-    ('WORKFLOW', 'RHINO'): "Work as in Rhino: the right button orbits (a quick right click is Enter), Rhino cursor, zoom towards the cursor, and typing a letter starts the command line",
-    ('WORKFLOW', 'AUTOCAD'): "Work as in AutoCAD: the middle button pans (Shift + middle orbits), crosshair cursor, zoom towards the cursor, and typing a letter starts the command line",
-    ('WORKFLOW', 'BLENDER'): "Work as in Blender: Blender's navigation, the letters keep Blender's shortcuts (Space opens the command line). The Wanderer tools stay",
-    ('LOOK', 'RHINO'): "Rhino look: the theme Wanderer Graphite, neutral gray panels and a light viewport. Your current theme is saved first",
-    ('LOOK', 'AUTOCAD'): "AutoCAD look: the dark theme Wanderer Blueprint. Your current theme is saved first",
-    ('LOOK', 'BLENDER'): "Your own theme: puts back the theme you had before applying a Wanderer theme (nothing changes if you never applied one)",
+    'RHINO': "Work as in Rhino: the right button orbits (a quick right click is Enter), Rhino cursor, zoom towards the cursor. Space opens the command line; Quick Type stays off (turn it on in the bottom bar, or Shift+Q, to start a command by typing a letter)",
+    'AUTOCAD': "Work as in AutoCAD: the middle button pans (Shift + middle orbits), crosshair cursor, zoom towards the cursor. Space opens the command line; Quick Type stays off (turn it on in the bottom bar, or Shift+Q, to start a command by typing a letter)",
+    'MAX': "Work as in 3ds Max: the middle button pans (Alt + middle orbits), zoom towards the cursor, Shift + drag copies an object (Clone Options: copy or instance, number, name) and extrudes edges or faces. Space opens the command line; Quick Type stays off (turn it on in the bottom bar, or Shift+Q, to start a command by typing a letter)",
+    'BLENDER': "Work as in Blender: Blender's navigation, the letters keep Blender's shortcuts (Space opens the command line). The Wanderer tools stay",
 }
+
+
+def _alt_emulates_mouse():
+    """Blender émule-t-il le bouton du milieu avec Alt ? Alt + glisser fait alors tourner la vue au lieu de copier."""
+    try:
+        inp = bpy.context.preferences.inputs
+        return bool(inp.use_mouse_emulate_3_button and inp.mouse_emulate_3_button_modifier == 'ALT')
+    except AttributeError:
+        return False
 
 
 def workflow_preset_of(prefs):
@@ -491,50 +318,26 @@ def apply_workflow_preset(prefs, style):
     return changed
 
 
-def apply_look_preset(context, style):
-    """Applique l'apparence `style`. Retourne un court texte qui dit ce qui a été fait."""
-    which = LOOK_PRESETS[style]
-    try:
-        if which is not None:
-            res = bpy.ops.dessin.install_theme(which=which)
-            return ("theme Wanderer " + which.capitalize()) if 'FINISHED' in res else "theme not changed"
-        if DESSIN_OT_restore_theme.poll(context):
-            res = bpy.ops.dessin.restore_theme()
-            return "your previous theme" if 'FINISHED' in res else "theme not changed"
-    except RuntimeError:
-        return "theme not changed"
-    return "your theme is unchanged"
-
-
 class DESSIN_OT_apply_preset(bpy.types.Operator):
     bl_idname = "dessin.apply_preset"
     bl_label = "Apply preset"
-    bl_description = "Sets several Wanderer options at once, to work or look like Rhino, AutoCAD or Blender"
+    bl_description = "Sets several Wanderer options at once, to work like Rhino, AutoCAD, 3ds Max or Blender"
     bl_options = {'INTERNAL'}
 
     style: bpy.props.EnumProperty(items=[(k, n, "") for k, n in PRESET_STYLES], default='RHINO', options={'SKIP_SAVE'})
-    part: bpy.props.EnumProperty(items=(('ALL', "Workflow and look", ""), ('WORKFLOW', "Workflow", ""), ('LOOK', "Look", "")),
-                                 default='ALL', options={'SKIP_SAVE'})
 
     @classmethod
     def description(cls, context, properties):
-        if properties.part == 'ALL':
-            return PRESET_TIPS[('WORKFLOW', properties.style)] + ". " + PRESET_TIPS[('LOOK', properties.style)]
-        return PRESET_TIPS[(properties.part, properties.style)]
+        return PRESET_TIPS[properties.style]
 
     def execute(self, context):
         prefs = _wanderer_prefs(context)
         if prefs is None:
             return {'CANCELLED'}
         name = dict(PRESET_STYLES)[self.style]
-        done = []
-        if self.part in {'ALL', 'WORKFLOW'}:
-            n = len(apply_workflow_preset(prefs, self.style))
-            done.append(f"workflow: {n} option(s) changed" if n else "workflow: already set")
-        if self.part in {'ALL', 'LOOK'}:
-            done.append("look: " + apply_look_preset(context, self.style))
+        n = len(apply_workflow_preset(prefs, self.style))
         _prefs_dirty(context)
-        self.report({'INFO'}, f"{name} preset  ·  " + "  ·  ".join(done))
+        self.report({'INFO'}, f"{name} preset  ·  " + (f"{n} option(s) changed" if n else "already set"))
         return {'FINISHED'}
 
 
@@ -605,6 +408,16 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
     gumball_rot90: bpy.props.BoolProperty(
         name="Gumball rotation in steps", default=True,
         description="On: the Gumball rotates in steps and Shift gives free rotation. Off: free rotation, Shift gives steps")
+    copy_key: bpy.props.EnumProperty(
+        name="Copy while dragging",
+        items=(('ALT', "Alt + drag (Rhino)", "Hold Alt while dragging an object or a Gumball handle to move a copy, like in Rhino. "
+                "Shift keeps the dominant axis"),
+               ('SHIFT', "Shift + drag (3ds Max)", "Like in 3ds Max: Shift + drag an object or a Gumball handle opens Clone "
+                "Options (copy or instance, number of copies, name); on edges or faces it extrudes, and Ctrl + Shift + drag "
+                "copies them. The copy is kept even if you let go of Shift. Alt then keeps the dominant axis; Shift + click "
+                "still adds to the selection")),
+        default='ALT',
+        description="Key that turns a drag (an object or a Gumball handle) into a copy")
     gumball_step: bpy.props.EnumProperty(
         name="Rotation step", default='90',
         items=(('5', "5°", ""), ('10', "10°", ""), ('15', "15°", ""), ('30', "30°", ""), ('45', "45°", ""), ('90', "90°", "")),
@@ -631,8 +444,9 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
         name="Pan in orthographic side views", default=False, update=_update_view_keymap,
         description="Replace orbit with pan in Front / Top / Right... views. Leave off for standard Blender navigation")
     view_persp: bpy.props.BoolProperty(
-        name="Ctrl + Shift + orbit button: switch to perspective", default=True, update=_update_view_keymap,
-        description="In orthographic side views, holding Ctrl + Shift with the orbit button switches the view to perspective and orbits")
+        name="Ctrl + Shift + orbit button: orbit out of the view", default=True, update=_update_view_keymap,
+        description="In orthographic side views, holding Ctrl + Shift with the orbit button orbits. The view switches to perspective "
+                    "only if Auto Perspective is on in Preferences > Navigation; otherwise it stays orthographic (User Orthographic)")
     view_button: bpy.props.EnumProperty(
         name="Orbit button", default='MIDDLE', update=_update_view_keymap,
         items=(('MIDDLE', "Middle mouse button", "Your orbit button is the middle mouse button (Blender default)"),
@@ -707,10 +521,6 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
     cmd_size: bpy.props.IntProperty(
         name="Command bar size", default=100, min=40, max=250, subtype='PERCENTAGE', update=_update_cmd_line,
         description="Size of the command bar text and pill (lower it if it looks too big on your screen)")
-    oda_path: bpy.props.StringProperty(
-        name="ODA File Converter", default="", subtype='FILE_PATH',
-        description="DWG import and export go through the free ODA File Converter (opendesign.com). Leave empty when it is "
-                    "installed in its usual place; otherwise choose the program here (on a Mac: ODAFileConverter.app)")
     mode_icons: bpy.props.BoolProperty(
         name="Mode bar: icons only", default=False, update=_update_cmd_line,
         description="Always show the mode buttons at the bottom right of the 3D viewport (Grid Snap, Ortho, Polar, OSnap, "
@@ -753,25 +563,20 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
                           "Current workflow: " + (dict(PRESET_STYLES)[now] if now else "custom"), icon='INFO')
         row = layout.row(align=True)
         row.label(text="Workflow")
-        for style, name in PRESET_STYLES:        # l'apparence a sa propre ligne, dans la section Appearance
+        for style, name in PRESET_STYLES:
             op = row.operator(DESSIN_OT_apply_preset.bl_idname, text=name, depress=(now == style))
-            op.style, op.part = style, 'WORKFLOW'
+            op.style = style
 
     def _draw_appearance(self, layout):
-        for title, names in (("Theme (dark)", THEME_DARK), ("Theme (light)", THEME_LIGHT)):
-            row = layout.row(align=True)
-            row.label(text=title)
-            for which, name in names:
-                row.operator(DESSIN_OT_install_theme.bl_idname, text=name).which = which
-        row = layout.row(align=True)
-        row.label(text="")
-        row.operator(DESSIN_OT_restore_theme.bl_idname, icon='LOOP_BACK')
-        layout.operator(DESSIN_OT_theme_reset.bl_idname, icon='LOOP_BACK')
-        layout.separator()
+        col = layout.column(align=True)        # (deux lignes : un libellé de Blender ne passe pas à la ligne)
+        col.label(text="The Wanderer themes are no longer included in the add-on.", icon='INFO')
+        col.label(text="Get them from the Blender Extensions website (extensions.blender.org) or next to the add-on on "
+                       "the GitHub releases page,", icon='BLANK1')
+        col.label(text="then choose one in Preferences > Themes.", icon='BLANK1')
         col = self._split(layout)
         col.prop(self, "icon_palette")
         col.prop(self, "language")
-        if self.language != pref_applied_language():
+        if lang() != pref_applied_language():
             layout.label(text="Applying the language... If the names do not change, restart Blender.", icon='INFO')
         else:
             layout.label(text="The language is applied at once. If a name stays in the previous language, restart Blender.")
@@ -851,6 +656,10 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
 
     def _draw_gumball(self, layout):
         col = layout.column(align=True)
+        col.prop(self, "copy_key")
+        if self.copy_key == 'ALT' and _alt_emulates_mouse():
+            col.label(text="Alt also emulates the middle button (Blender: Input > Emulate 3 Button Mouse): use Shift, "
+                           "or change that setting", icon='ERROR')
         col.prop(self, "gumball_rot90")
         col.prop(self, "gumball_step")
         col.prop(self, "gumball_line")
@@ -873,19 +682,6 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
         col.prop(self, "curve_quality")
         col.label(text="Sides given to circles, arcs and curves by Extrude, Planar Surface, Revolve, Trim...")
         layout.prop(self, "far_warning")
-
-    def _draw_dxf(self, layout):
-        layout.prop(self, "oda_path")
-        try:
-            from .import_dxf import cad_converter
-            found = cad_converter()
-        except Exception:
-            found = None
-        if found is None:
-            layout.label(text="No DWG converter found: DXF works, DWG needs the free ODA File Converter", icon='INFO')
-        else:
-            layout.label(text=("ODA File Converter found" if found[0] == 'oda' else "LibreDWG tools found")
-                         + ": DWG import and export are available", icon='CHECKMARK')
 
     def _draw_shortcuts(self, layout):
         top = layout.row(align=True)
@@ -918,14 +714,13 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
                         cell.prop(kmi, "type", text="", full_event=True)
 
     PANELS = (("presets", "Presets", False, "_draw_presets"),
-              ("appearance", "Appearance: theme, icons, language", False, "_draw_appearance"),
+              ("appearance", "Appearance: icons, language", False, "_draw_appearance"),
               ("navigation", "Navigation and mouse", False, "_draw_navigation"),
               ("command", "Command line and aliases", False, "_draw_command_line"),
               ("drawing", "Drawing: crosshair and behavior", True, "_draw_drawing"),
               ("gumball", "Gumball", True, "_draw_gumball"),
               ("toolbar", "Toolbar", True, "_draw_toolbar"),
               ("perf", "Performance and precision", True, "_draw_performance"),
-              ("dxf", "DXF / DWG", True, "_draw_dxf"),
               ("shortcuts", "Shortcuts", True, "_draw_shortcuts"))
 
     def draw(self, context):

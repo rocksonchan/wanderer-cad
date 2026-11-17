@@ -36,7 +36,7 @@ import inspect
 class FakeLayout:
     def __getattr__(self,n):
         def f(*a,**k):
-            return (FakeLayout(),FakeLayout()) if n=='panel' else FakeLayout()      # layout.panel() rend (en-tête, corps)
+            return (FakeLayout(),FakeLayout()) if n in ('panel','panel_prop') else FakeLayout()      # layout.panel() rend (en-tête, corps)
         return f
 panels=[c for n,c in inspect.getmembers(m,inspect.isclass) if isinstance(c,type) and issubclass(c,bpy.types.Panel) and n.startswith('DESSIN_PT')]
 pb=0

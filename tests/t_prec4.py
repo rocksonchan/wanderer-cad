@@ -88,6 +88,21 @@ clear(); R=rect(); new,r,o=run("echelle",[C(0,0),C(8,0),M(10,0),T(2.5),'RET'],se
 rec(SEC,"Scale : après le point de référence (longueur 8), 2.5 tapé = nouvelle longueur (comme Rhino) -> facteur 0.3125",near(WP("R"),[(0,0,0),(2.5,0,0),(2.5,1.5625,0),(0,1.5625,0)],1e-6),f"{tuple(np.round(WP('R')[2],6))}")
 clear(); R=rect(); new,r,o=run("echelle",[C(0,0),C(8,0),C(16,0)],sel=[R])
 rec(SEC,"Scale par clics : 8 -> 16 = facteur 2",near(WP("R"),[(0,0,0),(16,0,0),(16,10,0),(0,10,0)],1e-6),"")
+# Scale en centimètres : la longueur tapée est en cm (1 = 1 cm), le facteur reste un nombre sans unité
+us.length_unit='CENTIMETERS'
+clear(); R=rect(); new,r,o=run("echelle",[C(0,0),C(8,0),M(10,0),T(100),'RET'],sel=[R])
+rec(SEC,"Scale en cm : référence 800 cm, 100 tapé = 100 cm -> facteur 0.125",near(WP("R"),[(0,0,0),(1,0,0),(1,0.625,0),(0,0.625,0)],1e-6),f"{tuple(np.round(WP('R')[2],6))}")
+clear(); R=rect(); new,r,o=run("echelle",[C(0,0),C(8,0),M(10,0),T(1),'RET'],sel=[R])
+rec(SEC,"Scale en cm : 1 tapé = 1 cm (et non 100 cm) -> facteur 0.00125",near(WP("R"),[(0,0,0),(0.01,0,0),(0.01,0.00625,0),(0,0.00625,0)],1e-7),f"{tuple(np.round(WP('R')[2],7))}")
+clear(); R=rect(); new,r,o=run("echelle",[C(0,0),M(4,0),T(2),'RET'],sel=[R])
+rec(SEC,"Scale en cm : 2 tapé juste après le point de base = facteur 2 (sans unité)",near(WP("R"),[(0,0,0),(16,0,0),(16,10,0),(0,10,0)],1e-5),f"{tuple(np.round(WP('R')[2],6))}")
+for tool in ("echelle_2d","echelle_1d"):
+    clear(); R=rect(); new,r,o=run(tool,[C(0,0),C(8,0),M(10,0),T(400),'RET'],sel=[R])
+    rec(SEC,f"{tool} en cm : 400 tapé = 400 cm -> la longueur de référence 800 cm devient 400 cm",abs(WP("R")[1][0]-4.0)<1e-6,f"{tuple(np.round(WP('R')[1],6))}")
+us.length_unit='MILLIMETERS'; us.scale_length=0.001
+clear(); R=rect(); new,r,o=run("echelle",[C(0,0),C(8,0),M(10,0),T(4),'RET'],sel=[R])
+rec(SEC,"Scale en mm (échelle 0.001) : 4 tapé = 4 mm = 4 unités -> facteur 0.5",near(WP("R"),[(0,0,0),(4,0,0),(4,2.5,0),(0,2.5,0)],1e-6),f"{tuple(np.round(WP('R')[2],6))}")
+us.scale_length=1.0; us.length_unit='METERS'
 clear(); R=rect(); new,r,o=run("miroir",[C(-3,0),C(-3,5)],sel=[R])
 mr=[ob for ob in bpy.data.objects if ob.name!="R"]
 allp=np.vstack([ctrl_pts(ob)[0] for ob in mr]) if mr else WP("R")

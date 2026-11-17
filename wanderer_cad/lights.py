@@ -169,6 +169,7 @@ class DESSIN_OT_light_area(LightBase):
                       "it lights away from the construction plane (F: flip, C: from center)")
 
     TITLE = "Area Light"
+    CORNER_STAGES = (1,)
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2
@@ -335,6 +336,8 @@ class DESSIN_OT_camera_target(LightBase):
             context.scene.camera = obj
 
 
+# outils de transformation de Blender : leur gizmo est remplacé par le Gumball (comme le Gumball de Rhino)
+GUMBALL_TRANSFORM_TOOLS = ("builtin.move", "builtin.rotate", "builtin.scale", "builtin.scale_cage", "builtin.transform")
 _GUMBALL_TOOLS = ("builtin.select", "builtin.select_box", "builtin.select_circle", "builtin.select_lasso",
                   "dessin.selection_boite_tool", "dessin.selection_lasso_tool",
                   "dessin.selection_rect_tool", "dessin.selection_cercle_tool")

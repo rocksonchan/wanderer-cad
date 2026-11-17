@@ -19,30 +19,34 @@ def pills(ops):
             out.append((min(xs),min(ys),max(xs),max(ys)))
     return out
 def margins(free, left, right):
-    """(marge à gauche de la barre d'outils, marge à droite du panneau) pour la rangée du bas."""
+    """(marge à gauche de la barre d'outils, marge au bord droit de la vue) pour la rangée du bas. La barre latérale (N)
+    n'est pas déduite : elle passe par-dessus les barres, qui gardent leur place."""
     ops, width, compact = draw(free, left, right)
     P = pills(ops)
     low = [p for p in P if abs(p[1] - min(q[1] for q in P)) < 1.0]
-    return round(min(p[0] for p in low) - left, 1), round((width - right) - max(p[2] for p in low), 1), width, compact
-for name, left, right in (("panneaux égaux", 44, 44),
-                          ("barre latérale large (Mac : Layers ouvert)", 105, 445),
-                          ("barre d'outils large, pas de latérale", 200, 0),
-                          ("sans panneau", 0, 0)):
-    gl, gr, width, compact = margins(1100, left, right)
-    rec(SEC, f"{name} : même marge à gauche et à droite", abs(gl - gr) < 1.0, (gl, gr))
-# le groupe ne passe jamais sous un panneau, même très serré
+    return round(min(p[0] for p in low) - left, 1), round(width - max(p[2] for p in low), 1), width, compact
+for name, left in (("barre d'outils standard", 44), ("barre d'outils large", 200), ("sans barre d'outils", 0)):
+    gl, gr, width, compact = margins(1100, left, 0)
+    rec(SEC, f"{name} : même marge à gauche (barre d'outils) et à droite (bord de la vue)", abs(gl - gr) < 1.0, (gl, gr))
+# barre latérale ouverte : les barres ne bougent pas et ne changent pas de taille (le panneau passe par-dessus)
+def rows(free, left, right):
+    ops, width, compact = draw(free, left, right)
+    return sorted((round(p[0], 1), round(p[1], 1), round(p[2], 1)) for p in pills(ops)), compact
+ref = rows(1100 + 445, 105, 0)
+same = rows(1100, 105, 445)
+rec(SEC, "barre latérale (N) ouverte : les barres restent exactement à la même place", ref == same, (ref[0][:3], same[0][:3]))
+# le groupe ne passe jamais sous la barre d'outils ni au-delà du bord de la vue
 bad = []
-for left, right in ((105, 445), (300, 500), (44, 700), (0, 900)):
+for left in (0, 44, 105, 300):
     for free in range(260, 1400, 37):
-        ops, width, compact = draw(free, left, right)
+        ops, width, compact = draw(free, left, 0)
         P = pills(ops)
-        if any(p[0] < left - 0.01 or p[2] > width - right + 0.01 for p in P):
-            bad.append((left, right, free))
-rec(SEC, "rien ne glisse sous la barre d'outils ni sous la barre latérale", not bad, bad[:6])
+        if any(p[0] < left - 0.01 or p[2] > width + 0.01 for p in P):
+            bad.append((left, free))
+rec(SEC, "rien ne glisse sous la barre d'outils ni hors de la vue", not bad, bad[:6])
 # la ligne de commande seule sur sa ligne est centrée de la même façon
-ops, width, compact = draw(620, 105, 445)
+ops, width, compact = draw(620, 105, 0)
 P = pills(ops)
 top = max(P, key=lambda p: p[1])
-rec(SEC, "la ligne de commande au-dessus suit le même centre",
-    abs((top[0] - 105) - ((width - 445) - top[2])) < 1.0, (round(top[0] - 105, 1), round((width - 445) - top[2], 1)))
+rec(SEC, "la ligne de commande au-dessus suit le même centre", abs((top[0] - 105) - (width - top[2])) < 1.0, (round(top[0] - 105, 1), round(width - top[2], 1)))
 summary()

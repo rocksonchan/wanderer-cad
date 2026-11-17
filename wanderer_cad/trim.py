@@ -9,7 +9,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector, geometry
 
 from .core import TAU, arc_bezier_data, pref
-from .drawing import _HOVER, draw_px_points, get_shader, px_scale
+from .drawing import _HOVER, draw_px_points, get_shader, line_px, px_scale
 from .base import DessinBase
 from .dimensions import fit_circle_points
 
@@ -835,8 +835,82 @@ def trim_mesh_cut_fn(objs, depsgraph, tol):
 _CURVE_PTS = {"handle": None}
 
 
+_CURVE_TOP = {"key": None, "segs": None}
+
+
+def curve_selection_color():
+    try:
+        th = bpy.context.preferences.themes[0].view_3d
+        return (*tuple(th.object_selected)[:3], 1.0), (*tuple(th.object_active)[:3], 1.0)
+    except (AttributeError, IndexError, TypeError):
+        return (0.93, 0.55, 0.15, 1.0), (1.0, 0.67, 0.25, 1.0)
+
+
+def selected_curve_segments(objs):
+    """Segments (monde) du tracé des courbes sélectionnées, d'après leur forme évaluée ; 60 000 segments au plus."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for o in objs:
+        try:
+            ev = o.evaluated_get(dg)
+            me = ev.to_mesh()
+        except (RuntimeError, AttributeError, ReferenceError):
+            continue
+        try:
+            if me is None or not len(me.edges):
+                continue
+            n = len(me.vertices)
+            co = np.empty(n * 3, dtype=np.float32)
+            me.vertices.foreach_get("co", co)
+            co = co.reshape(n, 3)
+            M = np.array(o.matrix_world, dtype=np.float32)
+            co = co @ M[:3, :3].T + M[:3, 3]
+            ed = np.empty(len(me.edges) * 2, dtype=np.int32)
+            me.edges.foreach_get("vertices", ed)
+            out.append((o == bpy.context.view_layer.objects.active, co[ed]))
+        finally:
+            ev.to_mesh_clear()
+        if sum(len(c) for _a, c in out) > 120000:
+            break
+    return out
+
+
+def selected_curves_on_top(ctx):
+    """Courbes sélectionnées dessinées par-dessus les surfaces, comme dans Rhino : un tracé posé sur une face ou qui
+    traverse un objet reste visible en entier (Blender le cachait derrière les faces)."""
+    if ctx.mode != 'OBJECT' or ctx.region_data is None:
+        return
+    objs = [o for o in ctx.selected_objects if o.type == 'CURVE' and o.visible_get()
+            and not o.data.bevel_depth and not o.data.extrude and o.data.bevel_mode != 'OBJECT']     # (un tracé, pas un tube)
+    if not objs:
+        return
+    key = (_HOVER["version"], tuple(o.name for o in objs))
+    if _CURVE_TOP["key"] != key:
+        _CURVE_TOP["segs"] = selected_curve_segments(objs)
+        _CURVE_TOP["key"] = key
+    segs = _CURVE_TOP["segs"]
+    if not segs:
+        return
+    sel, act = curve_selection_color()
+    shader = get_shader('3D')
+    gpu.state.blend_set('ALPHA')
+    gpu.state.depth_test_set('NONE')
+    gpu.state.line_width_set(line_px(1.6))
+    shader.bind()
+    for is_act, co in segs:
+        shader.uniform_float("color", act if is_act else sel)
+        batch_for_shader(shader, 'LINES', {"pos": co}).draw(shader)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+
+
 def curve_points_cb():
-    """Points de contrôle des courbes sélectionnées (comme « Points On » de Rhino) : visibles dès que la courbe est cliquée."""
+    """Points de contrôle des courbes sélectionnées (comme « Points On » de Rhino) : visibles dès que la courbe est cliquée.
+    Les courbes sélectionnées sont aussi dessinées par-dessus les surfaces (visibles à travers un objet, comme Rhino)."""
+    try:
+        selected_curves_on_top(bpy.context)
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        pass
     if not pref("curve_points"):
         return
     try:

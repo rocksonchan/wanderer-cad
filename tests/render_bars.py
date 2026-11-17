@@ -24,7 +24,7 @@ class _Blf:
     def color(self, fid, r, g, b, a=1.0): self.col = (r, g, b, a)
     def position(self, fid, x, y, z): self.pos = (x, y)
     def draw(self, fid, text):
-        OPS.append(("text", self.pos[0], self.pos[1], text, self.sz, self.col, self.bold))
+        OPS.append(("text", self.pos[0] + _STATE["off"][0], self.pos[1] + _STATE["off"][1], text, self.sz, self.col, self.bold))
         _STATE["blend"] = 'NONE'            # comme Blender : le mélange alpha est coupé après chaque texte (mesuré par t_barblend)
     def enable(self, fid, flag): self.bold = True
     def disable(self, fid, flag): self.bold = False
@@ -40,10 +40,21 @@ class _Shader:
 
 class _Batch:
     def __init__(self, sh, kind, pos): self.sh, self.kind, self.pos = sh, kind, [tuple(p)[:2] for p in pos]
-    def draw(self, sh): OPS.append((self.kind, self.pos, sh.col, sh.lw if sh.lw is not None else _STATE["lw"], _STATE["blend"]))     # (dernier : mélange alpha au moment du tracé)
+    def draw(self, sh):
+        ox, oy = _STATE["off"]              # (décalage du repère : gpu.matrix.translate, les 4 vues de Blender)
+        OPS.append((self.kind, [(x + ox, y + oy) for x, y in self.pos], sh.col, sh.lw if sh.lw is not None else _STATE["lw"], _STATE["blend"]))     # (dernier : mélange alpha au moment du tracé)
 
 
-_STATE = {"lw": 1.0, "blend": 'NONE', "gpu": None}
+_STATE = {"lw": 1.0, "blend": 'NONE', "gpu": None, "off": (0.0, 0.0)}
+
+
+class _Matrix:
+    """gpu.matrix : seul le décalage du repère est noté, et reporté sur les tracés qui suivent (formes et textes)."""
+    class _Keep:
+        def __enter__(self): self.prev = _STATE["off"]
+        def __exit__(self, *a): _STATE["off"] = self.prev
+    def push_pop(self): return _Matrix._Keep()
+    def translate(self, v): _STATE["off"] = (_STATE["off"][0] + float(v[0]), _STATE["off"][1] + float(v[1]))
 
 
 class _Bpy:
@@ -58,7 +69,7 @@ def install(ui_scale=1.0, theme=None):
     CL.gpu = NS(state=NS(blend_set=lambda mode: _STATE.__setitem__("blend", mode), blend_get=lambda: _STATE["blend"],
                          line_width_set=lambda w: _STATE.__setitem__("lw", float(w)),
                          viewport_get=lambda: (0, 0, region.width, region.height)),
-                shader=NS(from_builtin=lambda name: _Shader(name)))
+                shader=NS(from_builtin=lambda name: _Shader(name)), matrix=_Matrix())
     CL.get_shader = lambda kind: _Shader("UNIFORM_COLOR")
     CL.batch_for_shader = lambda sh, kind, data: _Batch(sh, kind, data["pos"])
     real_prefs = bpy.context.preferences
@@ -67,7 +78,7 @@ def install(ui_scale=1.0, theme=None):
         CL._cmd_theme = lambda: dict(theme)
 
 
-def draw(free, left=44, right=44, height=1000, mouse=None, tip=False):
+def draw(free, left=44, right=0, height=1000, mouse=None, tip=False):
     """Dessine les barres pour une vue dont la place libre (entre barre d'outils et barre latérale) vaut `free` pixels.
     Retourne (tracés, largeur de la région, état compact de la vue)."""
     ptr = area.as_pointer()
@@ -96,7 +107,7 @@ def gpu_ready():
     return _STATE["gpu"]
 
 
-def draw_pixels(free, left=44, right=44, height=160, mouse=None, tip=False):
+def draw_pixels(free, left=44, right=0, height=160, mouse=None, tip=False):
     """Dessin RÉEL des barres (vrai gpu, vrai blf) dans une image hors écran vidée (transparente).
     Retourne (pixel(x, y) -> (r, v, b, opacité), tracés notés, largeur, hauteur, pixels, mélange alpha en fin de dessin)."""
     import gpu as _gpu

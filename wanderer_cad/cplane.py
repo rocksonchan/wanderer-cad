@@ -387,6 +387,11 @@ class DESSIN_OT_cplane(bpy.types.Operator):
     def done(self, context, frame, msg):
         cp_set(self.rv3d, frame)
         self.cleanup()
+        st = getattr(context.scene, "dessin", None)
+        if frame is not None and st is not None and getattr(st, "auto_cplane", False):
+            # un plan posé à la main reste en place : Auto CPlane (qui suit la sélection et la face survolée) s'efface
+            st.auto_cplane = False
+            msg += "  (Auto CPlane off: the plane stays here)"
         cmd_log(msg)
         return {'FINISHED'}
 

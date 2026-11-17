@@ -25,8 +25,8 @@ from .solids import (
     DESSIN_OT_tube,
 )
 from .subd import (
-    DESSIN_OT_subd, DESSIN_OT_subd_box, DESSIN_OT_subd_cone, DESSIN_OT_subd_cylinder, DESSIN_OT_subd_plane,
-    DESSIN_OT_subd_sphere, DESSIN_OT_subd_torus, DESSIN_PT_subd,
+    DESSIN_OT_clone_options, DESSIN_OT_subd, DESSIN_OT_subd_box, DESSIN_OT_subd_cone, DESSIN_OT_subd_cylinder,
+    DESSIN_OT_subd_plane, DESSIN_OT_subd_sphere, DESSIN_OT_subd_torus, DESSIN_PT_subd,
 )
 from .transform import (
     DESSIN_OT_array_linear, DESSIN_OT_array_polar, DESSIN_OT_array_rect, DESSIN_OT_copier, DESSIN_OT_cut,
@@ -56,11 +56,12 @@ from .layers import (
     DESSIN_OT_layer_move_selection, DESSIN_OT_layer_new, DESSIN_OT_layer_object, DESSIN_OT_layer_purge,
     DESSIN_OT_layer_refresh_colors, DESSIN_OT_layer_rename, DESSIN_OT_layer_reparent, DESSIN_OT_layer_select,
     DESSIN_OT_layer_set, DESSIN_OT_layer_show_all, DESSIN_OT_layer_state, DESSIN_PG_layer, DESSIN_PT_layers,
-    DESSIN_PT_layers_filter, DESSIN_PT_toolbox, layer_button_menu,
+    DESSIN_PT_layers_filter, DESSIN_OT_toolbox_fold, DESSIN_PT_toolbox, LAYER_PRINT_CLASSES, layer_button_menu,
 )
 from .import_dxf import DESSIN_OT_export_cad, DESSIN_OT_import_cad, menu_export_cad, menu_import_cad
 from .objects import (
     DESSIN_MT_ctx_display, DESSIN_MT_ctx_material, DESSIN_MT_ctx_polyline, DESSIN_MT_ctx_select, DESSIN_OT_group,
+    DESSIN_OT_lock, DESSIN_OT_unlock_all, DESSIN_OT_unlock_selected,
     DESSIN_OT_display_as, DESSIN_OT_material_remove_all, DESSIN_OT_poly_edit, DESSIN_OT_track_to, DESSIN_OT_ungroup, _GROUP_SEL,
     install_ctx_object_menu, menu_ctx_extra, menu_group, uninstall_ctx_object_menu,
 )
@@ -111,12 +112,14 @@ from .surface_edit import (
 )
 from .make2d import DESSIN_OT_make2d
 from .layout import LAYOUT_CLASSES, layout_after_command, layout_register, layout_unregister
+from .layout_sheet import SHEET_CLASSES
+from .quadview import QUAD_CLASSES, quad_follow, quad_reset
 from .lights import (
     DESSIN_OT_camera, DESSIN_OT_camera_target, DESSIN_OT_light_area, DESSIN_OT_light_point, DESSIN_OT_light_spot,
     DESSIN_OT_light_sun,
 )
 from .gumball_handles import (
-    DESSIN_GGT_gumball, DESSIN_GT_gb_arc, DESSIN_GT_gb_bar, DESSIN_GT_gb_dot, DESSIN_GT_gb_plane, DESSIN_OT_gumball_pull, DESSIN_PT_gumball, _EXT_BALL,
+    DESSIN_GGT_gumball, DESSIN_GT_gb_arc, DESSIN_GT_gb_arrow, DESSIN_GT_gb_bar, DESSIN_GT_gb_dot, DESSIN_GT_gb_plane, DESSIN_OT_gumball_alt_hover, DESSIN_OT_gumball_pull, DESSIN_PT_gumball, _EXT_BALL,
     draw_extrude_ball, statusbar_osnap,
 )
 from .menus import DESSIN_MT_menu, menu_add
@@ -147,7 +150,7 @@ from .navigation import (
     DEFAULT_TABS, DESSIN_OT_context_menu, DESSIN_OT_grs_key, DESSIN_OT_middle_action, DESSIN_OT_mouse_block,
     DESSIN_OT_mouse_track, DESSIN_OT_orbit_hold, DESSIN_OT_orbit_pan, DESSIN_OT_orbit_persp, DESSIN_OT_pan2d,
     DESSIN_OT_shortcuts_clear, DESSIN_OT_trackpad_pan, DESSIN_OT_trackpad_persp, add_grs_to_tool_keymaps,
-    apply_nav_inputs, nav_inputs_sync_soon, register_grs_keymap, register_shortcuts, register_view_keymap, start_navigation,
+    apply_nav_inputs, nav_in_hovered, nav_inputs_sync_soon, register_grs_keymap, register_shortcuts, register_view_keymap, start_navigation,
     unregister_grs_keymap, unregister_shortcuts, unregister_view_keymap,
 )
 from .views import (
@@ -159,7 +162,7 @@ from .cplane import DESSIN_OT_cplane, DESSIN_OT_cplane_elevation, _CP_DRAW, cpla
 from .pushpull import DESSIN_OT_pushpull, _AUTOCP, autocp_timer
 from .rhino_commands import (
     DESSIN_OT_contour, DESSIN_OT_dup_border, DESSIN_OT_dup_edge, DESSIN_OT_dup_face_border, DESSIN_OT_extract_srf, DESSIN_OT_intersect,
-    DESSIN_OT_merge_faces, DESSIN_OT_orient, DESSIN_OT_pipe, DESSIN_OT_rebuild_srf, DESSIN_OT_section,
+    DESSIN_OT_merge_faces, DESSIN_OT_orient, DESSIN_OT_orient3pt, DESSIN_OT_pipe, DESSIN_OT_rebuild_srf, DESSIN_OT_section,
     DESSIN_OT_unroll,
 )
 from .command_line import (
@@ -169,8 +172,8 @@ from .command_line import (
     unregister_cmd_keymap, unregister_mouse_track, views_bar_cb,
 )
 from .preferences import (
-    DESSIN_AP_prefs, DESSIN_OT_alias_add, DESSIN_OT_alias_edit, DESSIN_OT_alias_remove, DESSIN_OT_apply_preset, DESSIN_OT_install_theme,
-    DESSIN_OT_prefs_reset, DESSIN_OT_restore_theme, DESSIN_OT_theme_reset, DESSIN_PG_alias, aliases_restore_soon,
+    DESSIN_AP_prefs, DESSIN_OT_alias_add, DESSIN_OT_alias_edit, DESSIN_OT_alias_remove, DESSIN_OT_apply_preset,
+    DESSIN_OT_prefs_reset, DESSIN_PG_alias, aliases_restore_soon,
 )
 from .command_line import alias_changed
 from .core import language_caches_clear
@@ -251,6 +254,7 @@ classes = (
     DESSIN_OT_cotation_angle,
     DESSIN_OT_annotation,
     DESSIN_OT_subd_box,
+    DESSIN_OT_clone_options,
     DESSIN_OT_subd_sphere,
     DESSIN_OT_subd_cylinder,
     DESSIN_OT_subd_cone,
@@ -325,6 +329,7 @@ classes = (
     DESSIN_OT_unroll,
     DESSIN_OT_rebuild_srf,
     DESSIN_OT_orient,
+    DESSIN_OT_orient3pt,
     DESSIN_OT_hatch_match,
     DESSIN_OT_fillet_srf,
     DESSIN_OT_chamfer_srf,
@@ -392,7 +397,7 @@ classes = (
     DESSIN_OT_layer_click,
     DESSIN_OT_layer_object,
     DESSIN_PT_layers_filter,
-    DESSIN_PT_toolbox,
+    DESSIN_OT_toolbox_fold, DESSIN_PT_toolbox,
     DESSIN_OT_layer_carry,
     DESSIN_OT_layer_fold,
     DESSIN_OT_layer_reparent,
@@ -415,6 +420,9 @@ classes = (
     DESSIN_MT_ctx_material,
     DESSIN_OT_display_as,
     DESSIN_MT_ctx_display,
+    DESSIN_OT_lock,
+    DESSIN_OT_unlock_all,
+    DESSIN_OT_unlock_selected,
     DESSIN_OT_track_to,
     DESSIN_MT_ctx_select,
     DESSIN_PT_shapes,
@@ -440,17 +448,16 @@ classes = (
     DESSIN_GT_gb_dot,
     DESSIN_GT_gb_bar,
     DESSIN_GT_gb_arc,
+    DESSIN_GT_gb_arrow,
     DESSIN_GT_gb_plane,
     DESSIN_GGT_gumball,
+    DESSIN_OT_gumball_alt_hover,
     DESSIN_PT_gumball,
     DESSIN_PT_cotation,
     DESSIN_PT_hatch,
     DESSIN_PT_blocks,
     DESSIN_OT_shortcuts_clear,
     DESSIN_OT_prefs_reset,
-    DESSIN_OT_install_theme,
-    DESSIN_OT_restore_theme,
-    DESSIN_OT_theme_reset,
     DESSIN_OT_alias_add,
     DESSIN_OT_alias_remove,
     DESSIN_OT_alias_edit,
@@ -466,7 +473,7 @@ classes = (
     DESSIN_OT_grid_snap_step,
     DESSIN_MT_grid_snap,
     DESSIN_PT_selfilter,
-) + LAYOUT_CLASSES
+) + LAYER_PRINT_CLASSES + LAYOUT_CLASSES + SHEET_CLASSES + QUAD_CLASSES
 
 
 def _tool_list(mode):
@@ -571,7 +578,7 @@ def _toolbar_wanderer_ids():
 
 def _install_toolbar_filter():
     """Masque nos outils à l'affichage de la barre seulement : la recherche d'outil (wm.tool_set_by_id) les voit toujours."""
-    import sys
+    import inspect
     from bl_ui.space_toolsystem_common import ToolSelectPanelHelper, ToolDef
     cls = ToolSelectPanelHelper._tool_class_from_space_type('VIEW_3D')
     if cls is None or _TB_FILTER["orig"] is not None:
@@ -582,7 +589,8 @@ def _install_toolbar_filter():
     def tools_from_context(klass, context, mode=None):
         items = base(klass, context, mode)
         try:
-            if sys._getframe(1).f_code.co_name != "draw_cls":
+            caller = inspect.currentframe().f_back
+            if caller is None or caller.f_code.co_name != "draw_cls":
                 return items
             ours = set() if pref("show_toolbar_tools") else _toolbar_wanderer_ids()
         except (ValueError, AttributeError, KeyError):
@@ -707,6 +715,8 @@ def rclick_filter(op, context, event, orig):
     area = context.area
     if area is None:
         return None
+    if getattr(op, "QUAD_FOLLOW", False) and getattr(op, "area", None) is not None:
+        area = op.area              # (4 vues : la commande a pu suivre la souris dans une autre vue que celle du contexte)
     rc = getattr(op, "_rc", None)
     tol = max(1, pref("mouse_menu_tol"))
     if rc is None:
@@ -730,11 +740,7 @@ def rclick_filter(op, context, event, orig):
         if moved or drag:
             op._rc = None
             op._rc_swallow = True
-            if not start_navigation(context):
-                try:
-                    bpy.ops.view3d.rotate('INVOKE_DEFAULT')
-                except RuntimeError:
-                    pass
+            nav_in_hovered(context, event, rclick_navigate)       # (dans la vue sous la souris, pas celle où la commande a démarré)
         return {'RUNNING_MODAL'}
     if et == 'RIGHTMOUSE' and event.value == 'RELEASE':
         op._rc = None
@@ -747,6 +753,16 @@ def rclick_filter(op, context, event, orig):
     return None
 
 
+def rclick_navigate(context):
+    """Glisser avec le bouton droit pendant une commande : pan (vues de côté) ou orbite, dans la vue du contexte."""
+    if not start_navigation(context):
+        try:
+            bpy.ops.view3d.rotate('INVOKE_DEFAULT')
+        except RuntimeError:
+            pass
+    return True
+
+
 def rclick_quick_s():
     """Durée maximale d'un clic droit « rapide » : le délai du double-clic de Blender (350 ms par défaut)."""
     try:
@@ -755,7 +771,7 @@ def rclick_quick_s():
         return 0.35
 
 
-IS_MAC = __import__("sys").platform == "darwin"
+IS_MAC = __import__("platform").system() == "Darwin"
 
 
 class _CmdAsCtrl:
@@ -948,6 +964,8 @@ def _wrap_rclick(cls):
     orig = cls.modal
 
     def modal(self, context, event):
+        if getattr(self, "QUAD_FOLLOW", False):
+            quad_follow(self, context, event)         # 4 vues : la commande suit la souris d'une vue à l'autre
         if _is_paste(event):
             return paste_feed(self, context, event)
         if hasattr(self, "coord_pre"):
@@ -1230,8 +1248,16 @@ def register():
         _CURVE_PTS["handle"] = bpy.types.SpaceView3D.draw_handler_add(curve_points_cb, (), 'WINDOW', 'POST_VIEW')
     if _CP_DRAW["handle"] is None:
         _CP_DRAW["handle"] = bpy.types.SpaceView3D.draw_handler_add(cplane_draw_cb, (), 'WINDOW', 'POST_VIEW')
+    from . import header_bars
+    header_bars.register()                       # bouton des barres du bas, dans l'en-tête de la vue 3D
     if not bpy.app.timers.is_registered(autocp_timer):
         bpy.app.timers.register(autocp_timer, first_interval=0.5, persistent=True)
+    from .gumball_handles import tool_gizmo_timer
+    if not bpy.app.timers.is_registered(tool_gizmo_timer):
+        bpy.app.timers.register(tool_gizmo_timer, first_interval=0.5, persistent=True)
+    from .command_line import ui_language_watch
+    if not bpy.app.timers.is_registered(ui_language_watch):
+        bpy.app.timers.register(ui_language_watch, first_interval=1.0, persistent=True)
 
 
 def unregister():
@@ -1243,6 +1269,7 @@ def unregister():
     unregister_sel_filter_keys()
     unregister_osnap_hold_keys()
     oneshot_reset()
+    quad_reset()
     if _CMD["handle"] is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_CMD["handle"], 'WINDOW')
@@ -1295,6 +1322,17 @@ def unregister():
         _CP_DRAW["handle"] = None
     if bpy.app.timers.is_registered(autocp_timer):
         bpy.app.timers.unregister(autocp_timer)
+    from . import header_bars
+    header_bars.unregister()
+    from .gumball_handles import tool_gizmo_timer, tool_gizmo_restore
+    if bpy.app.timers.is_registered(tool_gizmo_timer):
+        bpy.app.timers.unregister(tool_gizmo_timer)
+    from .command_line import ui_language_watch
+    if bpy.app.timers.is_registered(ui_language_watch):
+        bpy.app.timers.unregister(ui_language_watch)
+    from .command_line import value_bubble_hide
+    value_bubble_hide()
+    tool_gizmo_restore()
     _LOD["pending"] = None
     if bpy.app.timers.is_registered(_lod_timer):
         bpy.app.timers.unregister(_lod_timer)

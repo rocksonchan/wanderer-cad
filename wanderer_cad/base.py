@@ -86,46 +86,33 @@ class DessinBase(bpy.types.Operator):
     HAS_FLIP = False
     HAS_MODE = False
     EDIT_OK = True  # la commande fonctionne aussi en mode édition (maillage) : elle ajoute alors de la géométrie
-    # EN: the command also works in Edit mode (mesh): it then adds geometry
     COORD_OK = True  # saisie #x,y / @x,y / d<angle
-    # EN: input #x,y / @x,y / d<angle
     LOCK_OK = True  # X / Y / Z : verrouille le déplacement du curseur sur un axe à partir du dernier point posé
-    # EN: X / Y / Z: locks cursor movement to an axis from the last placed point
-    FREE_CORNER_AT = ()  # nombre de points posés où Ortho (F8) / Polar (F10) ne s'appliquent pas (coin opposé d'un rectangle)
-    # EN: number of placed points at which Ortho (F8) / Polar (F10) are ignored (opposite corner of a rectangle).
-    #     Fork, 2026-11-17: a rectangle's diagonal is never on an axis, so Ortho would only give a flat shape.
+    CORNER_STAGES = ()   # étapes où l'on pose le coin opposé d'un rectangle : Ortho / Polar ne s'y appliquent pas
     PLANAR = True  # False : les points accrochés gardent leur vraie position 3D
-    # EN: False: snapped points keep their true 3D position
     LOCK_3D = False  # True : une commande plane peut tout de même quitter son plan le long d'un axe verrouillé (Polyline : Z)
-    # EN: True: a planar command can still leave its plane along a locked axis (Polyline: Z)
     PROP = ()      # étapes (nb de points posés) où Maj impose des proportions : 1 = base carrée, 2 = hauteur = côté (cube)
-    # EN: steps (number of points placed) where Shift forces proportions: 1 = square base, 2 = height = side (cube)
     ONESHOT_USER = True   # la commande désigne des points : un accrochage ponctuel (Maj + clic) s'éteint avec elle
-    # EN: the command picks points: a one-time snap (Shift + click) switches off with it
+    QUAD_FOLLOW = True    # 4 vues : la commande suit la souris d'une vue à l'autre (voir quad_follow)
 
     @classmethod
     def poll(cls, context):
         return context.area is not None and context.area.type == 'VIEW_3D'
 
     # ---- à surcharger ----
-    # EN: ---- to override ----
     def prompt(self):
         return ""
 
     def compute(self):
-        """Retourne (aperçu, guides, info, spec).
-        EN: Returns (preview, guides, info, spec)."""
+        """Retourne (aperçu, guides, info, spec)."""
         return [], [], "", None
 
     # ---- cycle de vie ----
-    # EN: ---- life cycle ----
     def invoke(self, context, event):
         if event.type == 'MOUSEMOVE' and _HOVER["running"] > 0:
             return {'CANCELLED', 'PASS_THROUGH'}  # une commande est déjà armée
-            # EN: a command is already armed
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS' and cmd_click_idle(context, event):
             return {'CANCELLED'}                  # clic sur une puce de la barre de commande
-            # EN: click on a chip in the command bar
         area = context.area
         prev = _CMD["op"].get(area.as_pointer()) if area is not None else None
         if prev is not None and prev is not self:
@@ -137,8 +124,6 @@ class DessinBase(bpy.types.Operator):
             if same and event.type == 'LEFTMOUSE' and event.value == 'PRESS':
                 # clic dans la partie transparente de la barre latérale (chevauchement des régions) : la commande en
                 # cours l'a laissé passer et l'outil s'est relancé ; le clic revient à la commande en cours
-                # EN: click in the transparent part of the sidebar (overlapping regions): the running command let it
-                #     through and the tool restarted; the click goes back to the running command
                 try:
                     prev.update_cursor(context, event)
                     if prev.cur is not None:
@@ -150,7 +135,6 @@ class DessinBase(bpy.types.Operator):
                 return {'CANCELLED'}
             if alive:
                 try:                              # ancienne commande restée en arrière-plan : on la termine
-                    # EN: old command left running in the background: end it
                     prev._done = {'CANCELLED'}
                     prev.cleanup(context)
                 except (ReferenceError, AttributeError, RuntimeError):
@@ -190,7 +174,6 @@ class DessinBase(bpy.types.Operator):
         self.coord = ''
         self.coord_pt = None
         self.from_state = None     # From (AutoCAD) : None, 'BASE' (on attend le point de base), 'OFFSET' (on tape le décalage)
-        # EN: From (AutoCAD): None, 'BASE' (waiting for the base point), 'OFFSET' (typing the offset)
         self.from_base = None
         self._from_dir = None
         self.preview = []
@@ -223,7 +206,6 @@ class DessinBase(bpy.types.Operator):
         if (event.type == 'LEFTMOUSE' and event.value == 'PRESS'
                 and self.cur is not None and self.tool_id is not None):
             # Lancé par un clic depuis la barre d'outils : ce clic pose déjà le premier point
-            # EN: Started by a click from the toolbar: that click already places the first point
             self.click(context)
         else:
             self.refresh(context)
@@ -245,9 +227,26 @@ class DessinBase(bpy.types.Operator):
     def tool_changed(self, context):
         return self.active_tool_id(context) != self.tool_id
 
+    def in_view(self, context, fn):
+        """Fait fn(contexte) dans la vue de la commande. Avec les 4 vues, elle a pu suivre la souris dans une autre vue
+        que celle où elle a démarré (que Blender garde pour contexte) : la ligne de commande, le menu du titre d'une vue
+        s'ouvrent dans la sienne."""
+        ov = None
+        try:
+            if self.area.as_pointer() != context.area.as_pointer():
+                ov = context.temp_override(area=self.area, region=self.region)
+                ov.__enter__()
+        except (TypeError, RuntimeError, AttributeError, ReferenceError):
+            ov = None
+        if ov is None:
+            return fn(context)
+        try:
+            return fn(bpy.context)
+        finally:
+            ov.__exit__(None, None, None)
+
     def mouse_over_ui(self, event):
-        """Souris au-dessus de la barre d'outils, de la barre latérale ou des en-têtes.
-        EN: Mouse over the toolbar, the sidebar or the headers."""
+        """Souris au-dessus de la barre d'outils, de la barre latérale ou des en-têtes."""
         space = self.area.spaces.active
         shown = {
             'TOOLS': getattr(space, "show_region_toolbar", True),
@@ -292,8 +291,7 @@ class DessinBase(bpy.types.Operator):
         self.cleanup(context)
 
     def after_finish(self, context):
-        """Commande validée : si elle venait de la barre d'outils, on retrouve l'outil de sélection.
-        EN: Command confirmed: if it came from the toolbar, go back to the select tool."""
+        """Commande validée : si elle venait de la barre d'outils, on retrouve l'outil de sélection."""
         if getattr(self, "tool_id", None):
             try:
                 idle_tool()
@@ -310,10 +308,8 @@ class DessinBase(bpy.types.Operator):
             pass
 
     def go_idle(self):
-        """Quitte l'outil : on retrouve Select / Move (ou la sélection de Blender si l'add-on n'est pas complet).
-        EN: Leave the tool: go back to Select / Move (or Blender's selection if the add-on is not complete)."""
+        """Quitte l'outil : on retrouve Select / Move (ou la sélection de Blender si l'add-on n'est pas complet)."""
         try:     # les puces de la commande qui se termine ne doivent plus capter les clics de Select
-            # EN: the chips of the command that is ending must no longer catch Select's clicks
             _CMD["hit"].pop(self.area.as_pointer(), None)
             self.area.tag_redraw()
         except (AttributeError, ReferenceError, NameError):
@@ -335,20 +331,15 @@ class DessinBase(bpy.types.Operator):
             return {'FINISHED'}
         if pref("esc_deselect"):
             self.deselect_all()  # Échap : la sélection est relâchée aussi
-            # EN: Esc: the selection is released too
         self.go_idle()      # Échap / Entrée sans rien faire : on sort de l'outil
-        # EN: Esc / Enter without doing anything: leave the tool
         return {'CANCELLED'}
 
     def undo_step(self, context, event):
         """Ctrl+Z pendant la commande. Par défaut : la commande est annulée, comme Échap (un second Ctrl+Z annule ensuite
-        l'opération précédente). Les commandes point par point retirent leur dernier point.
-        EN: Ctrl+Z during the command. By default: the command is cancelled, like Esc (a second Ctrl+Z then undoes
-            the previous operation). Point-by-point commands remove their last point."""
+        l'opération précédente). Les commandes point par point retirent leur dernier point."""
         return self.exit(context)
 
     # ---- accrochage ----
-    # EN: ---- snapping ----
     def collect_snaps(self, context):
         self.snap_data = collect_snap_points(context, getattr(self, "snap_exclude", None))
         self.snap_pts, self.snap_hom, self.snap_kinds, self.snap_bias = self.snap_data
@@ -357,7 +348,6 @@ class DessinBase(bpy.types.Operator):
     def find_snap(self, mx, my, region, rv3d):
         if (not self.snap_on and not oneshot_keys()) or self.snap_hom is None:
             return None            # (un accrochage ponctuel passe même si la touche S a coupé les accrochages)
-            # EN: (a one-time snap goes through even if the S key has turned snapping off)
         data = getattr(self, "snap_data", None)
         if data is None or data[0] is not self.snap_pts:
             data = (self.snap_pts, self.snap_hom, self.snap_kinds, self.snap_bias)
@@ -373,7 +363,6 @@ class DessinBase(bpy.types.Operator):
             self.snap_screen = None
             self.snap_kind = None
             _CMD["mouse"].pop(self.area.as_pointer(), None)     # plus de réticule hors de la vue
-            # EN: no more crosshair outside the view
             try:
                 self.area.tag_redraw()
             except ReferenceError:
@@ -381,11 +370,11 @@ class DessinBase(bpy.types.Operator):
             return
         self.region = region
         _CMD["mouse"][self.area.as_pointer()] = (event.mouse_x - region.x, event.mouse_y - region.y)
+        _CMD.setdefault("mouse_org", {})[self.area.as_pointer()] = (region.x, region.y)       # (région de ces coordonnées)
         _CMD.setdefault("mouse_t", {})[self.area.as_pointer()] = time.monotonic()
         if not self.points and _HOVER["version"] != self._seen:
             now = time.monotonic()
             if now - self._snap_time > 0.25:  # la scène a changé : on rafraîchit les accrochages
-                # EN: the scene has changed: refresh the snap points
                 self._snap_time = now
                 self.collect_snaps(context)
         rv3d = region_rv3d(region, self.area)
@@ -399,8 +388,6 @@ class DessinBase(bpy.types.Operator):
         _, _, n = plane_axes(self.axis)
         # plan du tracé : il passe par le premier point ; pour une courbe qui peut monter le long d'un axe verrouillé
         # (LOCK_3D), par le dernier point posé : la suite se dessine à sa hauteur, comme le mode Planar de Rhino
-        # EN: drawing plane: it passes through the first point; for a curve that can rise along a locked axis
-        #     (LOCK_3D), through the last placed point: the rest is drawn at its height, like Rhino's Planar mode
         origin = (self.points[-1] if self.LOCK_3D else self.points[0]) if self.points else plane_origin(self.axis)
 
         snap = self.find_snap(mx, my, region, rv3d)
@@ -412,7 +399,6 @@ class DessinBase(bpy.types.Operator):
             self._snap_pt = p.copy()
             if osnap("project") or (self.points and self.PLANAR):
                 p = p - n * (p - origin).dot(n)     # Project : on reste dans le plan de construction
-                # EN: Project: stay in the construction plane
             self.cur = p
         else:
             self.snap_screen = None
@@ -424,7 +410,6 @@ class DessinBase(bpy.types.Operator):
             node = None
             if hit is not None:
                 # Grid Snap (F9) : sans accrochage objet, le point libre se pose sur la grille du plan de construction
-                # EN: Grid Snap (F9): with no object snap, a free point lands on the construction plane's grid
                 step = grid_snap_step(context)
                 node = grid_snap_point(hit, self.axis, step) if step > 0.0 else None
                 self.cur = node if node is not None else hit
@@ -435,8 +420,6 @@ class DessinBase(bpy.types.Operator):
                     if node is not None and self.track_lines and self.track_screen is not None:
                         # Grid Snap et repérage : celui des deux qui est le plus près de la souris l'emporte (sinon, vue
                         # dézoomée, la ligne de repérage d'un point voisin empêcherait d'atteindre les nœuds d'à côté)
-                        # EN: Grid Snap and tracking: whichever is closer to the mouse wins (otherwise, when zoomed
-                        #     out, the tracking line of a nearby point would stop you reaching the neighbouring grid nodes)
                         sp = project_px(rv3d, region, node)
                         here = Vector((mx, my))
                         if sp is not None and (sp - here).length <= (Vector(self.track_screen) - here).length:
@@ -451,7 +434,6 @@ class DessinBase(bpy.types.Operator):
         if (self.cur is not None and self.snap_screen is None and self.track_screen is None
                 and grid_snap_step(context) > 0.0):
             # Grid Snap : une croix marque le nœud où le point va se poser (le réticule, lui, reste sous la souris)
-            # EN: Grid Snap: a cross marks the node where the point will land (the crosshair itself stays under the mouse)
             sp = project_px(rv3d, region, self.cur)
             if sp is not None:
                 self.track_screen = (sp.x, sp.y)
@@ -461,11 +443,7 @@ class DessinBase(bpy.types.Operator):
         """Grid Snap quand une direction est imposée (Ortho, Polar, verrou d'axe, ligne de repérage) : la grille ne peut
         plus choisir le point, elle garde la main sur la position le long de la ligne. Le long d'un axe du plan de
         construction, on retombe sur les nœuds de la grille ; dans une direction quelconque (Polar 30°...), la distance
-        depuis le départ de la ligne avance par pas entiers. Un accrochage objet garde toujours le dernier mot.
-        EN: Grid Snap when a direction is forced (Ortho, Polar, axis lock, tracking line): the grid can no longer
-            choose the point, but it still controls the position along the line. Along an axis of the construction
-            plane, it falls back on the grid nodes; in any other direction (Polar 30°...), the distance from the
-            start of the line moves in whole steps. An object snap always has the last word."""
+        depuis le départ de la ligne avance par pas entiers. Un accrochage objet garde toujours le dernier mot."""
         if self.cur is None or self.snap_screen is not None or len(self.track_lines) != 1:
             return
         step = grid_snap_step(context)
@@ -485,15 +463,16 @@ class DessinBase(bpy.types.Operator):
             self.track_screen = (sp.x, sp.y)
 
     def apply_ortho_polar(self, context, region, rv3d):
-        """Ortho (F8) : axes du plan seulement ; Polar (F10) : angles multiples du pas, avec une ligne guide.
-        EN: Ortho (F8): plane axes only; Polar (F10): multiples of the angle step, with a guide line."""
+        """Ortho (F8) : axes du plan seulement ; Polar (F10) : angles multiples du pas, avec une ligne guide."""
         try:
             st = context.scene.dessin
             ortho, polar = st.ortho, st.polar
         except (AttributeError, ReferenceError):
             return
-        if not (ortho or polar) or len(self.points) in self.FREE_CORNER_AT:
+        if not (ortho or polar):
             return
+        if len(self.points) in self.CORNER_STAGES:
+            return       # coin opposé d'un rectangle, d'un plan, d'une boîte : Ortho l'écraserait à plat (comme Rhino : libre)
         u, v, _n = plane_axes(self.axis)
         O = self.points[-1]
         d = self.cur - O
@@ -527,13 +506,11 @@ class DessinBase(bpy.types.Operator):
         self.track_screen = (sp.x, sp.y) if sp is not None else None
 
     # ---- verrouillage d'axe (touches X / Y / Z) ----
-    # EN: ---- axis lock (X / Y / Z keys) ----
     def lock_allowed(self):
         return self.LOCK_OK
 
     def lock_keys(self):
-        """Touches d'axe utiles à la commande : une commande plane n'annonce que les deux axes de son plan.
-        EN: Axis keys useful to the command: a planar command only offers the two axes of its plane."""
+        """Touches d'axe utiles à la commande : une commande plane n'annonce que les deux axes de son plan."""
         if not self.PLANAR or self.LOCK_3D:
             return "X/Y/Z"
         try:
@@ -550,12 +527,9 @@ class DessinBase(bpy.types.Operator):
         in_plane = abs(a.dot(n)) < 0.5
         if not in_plane and self.PLANAR and not self.LOCK_3D:
             return  # un axe hors du plan ne peut rien faire pour une commande plane
-            # EN: an axis outside the plane can do nothing for a planar command
         if in_plane or self.snap_screen is not None:
             # axe hors du plan : c'est la vraie position de l'accroche qui compte (monter jusqu'à la hauteur de ce point),
             # pas sa projection dans le plan de construction
-            # EN: axis outside the plane: the snap point's true position is what counts (rise to that point's height),
-            #     not its projection onto the construction plane
             q = self._snap_pt if (not in_plane and getattr(self, "_snap_pt", None) is not None) else self.cur
             p = O + a * (q - O).dot(a)
         else:
@@ -571,15 +545,13 @@ class DessinBase(bpy.types.Operator):
         self.track_screen = (sp.x, sp.y) if sp is not None else None
 
     # ---- repérage (SmartTrack) ----
-    # EN: ---- tracking (SmartTrack) ----
     def track_dirs(self):
         if self.PLANAR:
             return [i for i in range(3) if i != self.axis]
         return [0, 1, 2]
 
     def track_midpoint(self, region, rv3d, mx, my, n, origin):
-        """Milieu de deux points posés / acquis : le curseur s'y accroche quand il passe à proximité.
-        EN: Midpoint of two placed / acquired points: the cursor snaps to it when it passes nearby."""
+        """Milieu de deux points posés / acquis : le curseur s'y accroche quand il passe à proximité."""
         pts = list(self.points) + list(self.track_pts)
         if len(pts) < 2:
             return False
@@ -612,10 +584,7 @@ class DessinBase(bpy.types.Operator):
     def track_ext_dirs(self, p):
         """Directions des segments (courbes, arêtes) qui finissent au point p : leurs prolongements sont des lignes de
         repérage, comme SmartTrack de Rhino et l'accrochage Extension d'AutoCAD. Les directions déjà couvertes par les
-        axes X / Y / Z sont laissées de côté ; commande plane : seulement les directions du plan de construction.
-        EN: Directions of the segments (curves, edges) that end at point p: their extensions are tracking
-            lines, like Rhino's SmartTrack and AutoCAD's Extension snap. Directions already covered by the
-            X / Y / Z axes are skipped; planar command: only directions in the construction plane."""
+        axes X / Y / Z sont laissées de côté ; commande plane : seulement les directions du plan de construction."""
         cache = self.__dict__.setdefault("_ext_cache", {})
         edges = getattr(getattr(self, "snap_data", None), "edges", None)
         key = (round(p.x, 6), round(p.y, 6), round(p.z, 6), self.axis if self.PLANAR else -1)
@@ -629,12 +598,10 @@ class DessinBase(bpy.types.Operator):
             vecs = []
             for near, far in ((0, 1), (1, 0)):
                 at = np.flatnonzero(np.abs(edges[:, near, 0] - q[0]) <= tol)      # une colonne d'abord : rapide sur 200 000 segments
-                # EN: one column first: fast on 200,000 segments
                 if len(at):
                     at = at[np.abs(edges[at, near, 1:] - q[1:]).max(axis=1) <= tol]
                 if len(at):
                     vecs.append((edges[at, near, :] - edges[at, far, :])[:8])      # du segment vers l'extérieur
-                    # EN: from the segment outwards
             n = plane_axes(self.axis)[2] if self.PLANAR else None
             for v in (np.concatenate(vecs) if vecs else ()):
                 d = Vector(v)
@@ -646,7 +613,6 @@ class DessinBase(bpy.types.Operator):
                 d.normalize()
                 if any(abs(abs(d.dot(a)) - 1.0) < 1e-9 for a in AXES3):
                     continue                            # déjà une ligne X / Y / Z
-                    # EN: already an X / Y / Z line
                 if any(abs(d.dot(o)) > 1.0 - 1e-9 for o in out):
                     continue
                 out.append(d)
@@ -657,9 +623,7 @@ class DessinBase(bpy.types.Operator):
 
     def track_cursor(self, region, rv3d, mx, my, ray_o, ray_v, origin, n):
         """Accroche le curseur aux lignes alignées (X/Y/Z) issues des points posés et des points acquis, et aux
-        prolongements des segments qui finissent en ces points.
-        EN: Snaps the cursor to aligned lines (X/Y/Z) coming from placed points and acquired points, and to
-            the extensions of segments that end at those points."""
+        prolongements des segments qui finissent en ces points."""
         origins = list(self.points) + list(self.track_pts)
         if not origins:
             return
@@ -702,8 +666,7 @@ class DessinBase(bpy.types.Operator):
         self.track_screen = (sp.x, sp.y)
 
     def track_tick(self):
-        """Acquiert un point d'accrochage survolé assez longtemps (comme les SmartTrack de Rhino).
-        EN: Acquires a snap point hovered over long enough (like Rhino's SmartTrack)."""
+        """Acquiert un point d'accrochage survolé assez longtemps (comme les SmartTrack de Rhino)."""
         p = self._snap_pt
         if p is None or self.snap_screen is None or not pref("smart_tracks"):
             self._hover_pt = None
@@ -727,10 +690,8 @@ class DessinBase(bpy.types.Operator):
             pass
 
     # ---- affichage ----
-    # EN: ---- display ----
     def constrain_proportional(self):
-        """Maj : base carrée (étape 1) ou hauteur égale au côté de la base, soit un cube (étape 2).
-        EN: Shift: square base (step 1) or height equal to the base side, i.e. a cube (step 2)."""
+        """Maj : base carrée (étape 1) ou hauteur égale au côté de la base, soit un cube (étape 2)."""
         if not (self.shift and self.PROP and self.cur is not None and self.points):
             return
         k = len(self.points)
@@ -755,8 +716,7 @@ class DessinBase(bpy.types.Operator):
                 self.cur = base + n * math.copysign(side, h if h else 1.0)
 
     def prompt_tail(self):
-        """Fin d'invite commune (S: snap, Shift+F: From, Esc, Enter/Space) : masquée quand les touches servent à autre chose.
-        EN: Common end of the prompt (S: snap, Shift+F: From, Esc, Enter/Space): hidden when the keys are used for something else."""
+        """Fin d'invite commune (S: snap, Shift+F: From, Esc, Enter/Space) : masquée quand les touches servent à autre chose."""
         return True
 
     def refresh(self, context):
@@ -795,7 +755,6 @@ class DessinBase(bpy.types.Operator):
                     + ("   |   Esc: cancel" if last else "   |   Esc: cancel   Enter/Space: quit"))
         if self.tool_id and not self.points and not any(self.typed):
             # invite « au repos » de l'outil : réaffichée dès qu'on le sélectionne, avant même que la souris entre dans la vue
-            # EN: the tool's "idle" prompt: shown again as soon as it is selected, even before the mouse enters the view
             _CMD.setdefault("tool_prompt", {})[self.tool_id] = f"{self.TITLE} : {self.prompt()}   |   S: snap ON   |   Esc: cancel   Enter/Space: quit"
         try:
             set_prompt(self.area, txt)
@@ -809,7 +768,6 @@ class DessinBase(bpy.types.Operator):
         return f"{s} {self.unit_label}".strip()
 
     # ---- saisie numérique ----
-    # EN: ---- numeric input ----
     def typed_value(self, i):
         s = self.typed[i]
         if s in ('', '-', '.', '-.'):
@@ -820,8 +778,7 @@ class DessinBase(bpy.types.Operator):
             return None
 
     def typed_raw(self, i):
-        """Valeur saisie sans conversion d'unité (angle en degrés, facteur d'échelle...).
-        EN: Typed value without unit conversion (angle in degrees, scale factor...)."""
+        """Valeur saisie sans conversion d'unité (angle en degrés, facteur d'échelle...)."""
         s = self.typed[i]
         if s in ('', '-', '.', '-.'):
             return None
@@ -834,13 +791,11 @@ class DessinBase(bpy.types.Operator):
         return len(self.points) == self.NEEDED - 1
 
     # ---- Entrée = dernière valeur saisie (comme le <défaut> de Rhino / AutoCAD) ----
-    # EN: ---- Enter = last typed value (like the <default> in Rhino / AutoCAD) ----
     def last_typed_key(self):
         return (self.bl_idname, len(self.points))
 
     def last_typed_now(self):
-        """Valeurs que reprendrait Entrée à cette étape (None si rien à reprendre).
-        EN: Values Enter would reuse at this step (None if there is nothing to reuse)."""
+        """Valeurs que reprendrait Entrée à cette étape (None si rien à reprendre)."""
         if (not self.points or not self.NUMFIELDS or any(self.typed) or self.coord
                 or getattr(self, "from_state", None) or getattr(self, "selecting", False)):
             return None
@@ -851,8 +806,7 @@ class DessinBase(bpy.types.Operator):
             _LAST_TYPED[self.last_typed_key()] = list(self.typed)
 
     def reuse_last_typed(self, context, event):
-        """Entrée sans saisie : remet la dernière valeur tapée à cette étape. Vrai si elle peut être validée.
-        EN: Enter with nothing typed: restores the last value typed at this step. True if it can be confirmed."""
+        """Entrée sans saisie : remet la dernière valeur tapée à cette étape. Vrai si elle peut être validée."""
         last = self.last_typed_now()
         if not last or self.cur is None:
             return False
@@ -862,7 +816,6 @@ class DessinBase(bpy.types.Operator):
         try:
             if self.can_confirm_typed():
                 self.refresh(context)       # comme une frappe : la valeur s'applique dans la direction du curseur
-                # EN: like a keystroke: the value applies in the cursor's direction
                 ok = self.cur is not None
         except (RuntimeError, ReferenceError, ValueError, AttributeError):
             ok = False
@@ -879,7 +832,6 @@ class DessinBase(bpy.types.Operator):
         return abs(t) if mouse_for_sign >= 0 else -abs(t)
 
     # ---- saisie de coordonnées / angles ----
-    # EN: ---- coordinate / angle input ----
     def coord_target(self):
         u, v, n = plane_axes(self.axis)
         fb = self.from_base if getattr(self, "from_state", None) == 'OFFSET' else None
@@ -887,7 +839,6 @@ class DessinBase(bpy.types.Operator):
             txt = self.coord.strip().replace(' ', '')
             body = txt[1:] if txt[:1] == '@' else txt
             try:            # distance seule : le long de la direction base -> curseur (comme la distance directe d'AutoCAD)
-                # EN: distance only: along the base -> cursor direction (like AutoCAD's direct distance entry)
                 d = float(body.replace(',', '.')) * self.unit_f if body and not any(c in body for c in ',;<#') else None
             except ValueError:
                 d = None
@@ -903,7 +854,6 @@ class DessinBase(bpy.types.Operator):
         absolute, (x, y, z) = r
         if fb is not None and not self.coord.strip().startswith('#'):
             base = fb             # From : le décalage part du point de base choisi (avec ou sans @)
-            # EN: From: the offset starts from the chosen base point (with or without @)
         else:
             base = plane_origin(self.axis) if (absolute or not self.points) else self.points[-1]
         return base + u * x + v * y + n * z
@@ -918,7 +868,6 @@ class DessinBase(bpy.types.Operator):
             return False
         if (event.ctrl or event.alt) and (event.unicode or "") not in ('#', '@', '<'):
             return False            # AltGr (Ctrl + Alt sous Windows, Option sur Mac) sert à taper # et @ sur bien des claviers
-            # EN: AltGr (Ctrl + Alt on Windows, Option on Mac) is used to type # and @ on many keyboards
         if event.type == 'ESC' and self.coord:
             self.coord, self.coord_pt = '', None
             return True
@@ -955,9 +904,7 @@ class DessinBase(bpy.types.Operator):
 
     def coord_pre(self, context, event):
         """Saisie de coordonnées et From, traitées avant le modal propre à chaque outil (sinon la polyligne, par
-        exemple, prendrait Entrée ou les chiffres pour elle). Retourne un résultat de modal, ou None pour continuer.
-        EN: Coordinate input and From, handled before each tool's own modal (otherwise the polyline, for
-            example, would take Enter or the digits for itself). Returns a modal result, or None to continue."""
+        exemple, prendrait Entrée ou les chiffres pour elle). Retourne un résultat de modal, ou None pour continuer."""
         if not self.COORD_OK or getattr(self, "area", None) is None or event.value != 'PRESS':
             return None
         et = event.type
@@ -968,18 +915,15 @@ class DessinBase(bpy.types.Operator):
                 return None
             if et == 'LEFTMOUSE' and cmd_hit(self.area, event.mouse_x, event.mouse_y) is not None:
                 return None          # clic sur la barre de commande : pour elle
-                # EN: click on the command bar: it's for the bar
         except (ReferenceError, AttributeError):
             return None
         if (et == 'LEFTMOUSE' and self.from_state == 'OFFSET' and not self.coord
                 and not (event.ctrl or event.alt or event.oskey)):
             self.from_state, self.from_base = None, None   # clic pendant le décalage : point cliqué normal
-            # EN: click during the offset: a normal clicked point
             return None
         if (self.COORD_OK and et == 'F' and event.value == 'PRESS' and event.shift
                 and not (event.ctrl or event.alt or event.oskey)):
             # Maj+F : From (AutoCAD) : point de base temporaire, puis décalage tapé (@x,y, @d<angle ou distance)
-            # EN: Shift+F: From (AutoCAD): temporary base point, then a typed offset (@x,y, @d<angle or distance)
             if self.from_state is None:
                 self.from_state, self.from_base = 'BASE', None
             else:
@@ -989,7 +933,6 @@ class DessinBase(bpy.types.Operator):
             return {'RUNNING_MODAL'}
         if self.from_state is not None and et == 'ESC' and event.value == 'PRESS' and not self.coord:
             self.from_state, self.from_base = None, None     # Échap : on quitte seulement From
-            # EN: Esc: only leave From
             self.refresh(context)
             return {'RUNNING_MODAL'}
         if (self.from_state == 'BASE' and et == 'LEFTMOUSE' and event.value == 'PRESS'
@@ -1046,10 +989,8 @@ class DessinBase(bpy.types.Operator):
         return True
 
     # ---- construction ----
-    # EN: ---- building the result ----
     def build_edit(self, context, spec):
-        """Mode édition : la forme devient de la géométrie (sommets + arêtes) du maillage édité.
-        EN: Edit mode: the shape becomes geometry (vertices + edges) of the edited mesh."""
+        """Mode édition : la forme devient de la géométrie (sommets + arêtes) du maillage édité."""
         kind = spec[0]
         if kind == 'rect':
             pts, edges = list(spec[1]), [(0, 1), (1, 2), (2, 3), (3, 0)]
@@ -1081,7 +1022,6 @@ class DessinBase(bpy.types.Operator):
         mode = shape_output(context)
         if mode != 'CURVE' and kind in {'ellipse', 'poly', 'rect', 'line', 'circle', 'arc'}:
             # contour en maillage (arêtes, avec ou sans face) au lieu d'une courbe
-            # EN: outline as a mesh (edges, with or without a face) instead of a curve
             if kind == 'ellipse':
                 _, c, A, W = spec
                 return build_shape_mesh(context, "Ellipse", arc_samples(c, A, W, 1.0, 0.0, TAU, seg=64)[:-1], True, c, mode, plane_axes(self.axis)[2])
@@ -1098,7 +1038,6 @@ class DessinBase(bpy.types.Operator):
             return build_shape_mesh(context, "Arc", arc_samples(c, u, v, r, t0, sweep, seg=48), False, c, mode, plane_axes(self.axis)[2])
         if kind == 'ellipse':
             _, c, A, W = spec  # ellipse = image affine d'un cercle unité : c + A cos t + W sin t
-            # EN: ellipse = affine image of a unit circle: c + A cos t + W sin t
             return build_bezier_arc(context, "Ellipse", c, A, W, 1.0, 0.0, TAU, True)
         if kind == 'poly':
             return build_polyline(context, "Polygon", spec[1], True)
@@ -1145,28 +1084,23 @@ class DessinBase(bpy.types.Operator):
             self.finish_shape(context)
             return
         self.lock = None  # le verrouillage ne vaut que pour le segment en cours
-        # EN: the lock only applies to the current segment
         self.refresh(context)
 
     # ---- événements ----
-    # EN: ---- events ----
     def modal(self, context, event):
         done = getattr(self, "_done", None)
         if done:                                  # terminée depuis une autre instance (voir invoke)
-            # EN: ended from another instance (see invoke)
             return {'FINISHED'} if 'FINISHED' in done else {'CANCELLED'}
         if self.area is None or context.area is None:
             self.cleanup(context)
             return {'CANCELLED'}
         if self.tool_id and self.tool_changed(context):
             # l'utilisateur a choisi un autre outil : on rend la main sans avaler son clic
-            # EN: the user picked another tool: hand back control without swallowing their click
             self.cleanup(context)
             return {'CANCELLED', 'PASS_THROUGH'}
         et = event.type
         self.shift = bool(event.shift)
         osnap_hold_event(context, event)        # Maj tenu au-dessus des cases OSnap : elles se décochent (accrochage ponctuel)
-        # EN: Shift held over the OSnap boxes: they get unticked (one-time snap)
 
         if et == 'TIMER':
             self.track_tick()
@@ -1174,7 +1108,6 @@ class DessinBase(bpy.types.Operator):
 
         if et in {'LEFT_SHIFT', 'RIGHT_SHIFT'} and self.PROP and self.points:
             self.update_cursor(context, event)   # Maj enfoncé / relâché : l'aperçu change tout de suite
-            # EN: Shift pressed / released: the preview changes right away
             return {'RUNNING_MODAL'}
 
         if et in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
@@ -1182,11 +1115,9 @@ class DessinBase(bpy.types.Operator):
             if (find_window_region(self.area, event.mouse_x, event.mouse_y) is None
                     or self.mouse_over_ui(event)):
                 return {'PASS_THROUGH'}  # sinon les boutons de la barre d'outils ne s'activent plus
-                # EN: otherwise the toolbar buttons stop activating
             return {'RUNNING_MODAL'}
 
         # Hors de la vue (autres zones, barre d'outils, barre latérale) : ce n'est pas pour nous
-        # EN: Outside the view (other areas, toolbar, sidebar): not for us
         if (find_window_region(self.area, event.mouse_x, event.mouse_y) is None
                 or self.mouse_over_ui(event)):
             return {'PASS_THROUGH'}
@@ -1195,22 +1126,23 @@ class DessinBase(bpy.types.Operator):
             hit = cmd_hit(self.area, event.mouse_x, event.mouse_y)
             if hit is not None:
                 # clic sur une puce de la barre de commande : même effet que la touche correspondante
-                # EN: click on a chip in the command bar: same effect as the matching key
                 if hit[0] == 'open':
-                    bpy.ops.dessin.command_line('INVOKE_DEFAULT')
+                    self.in_view(context, lambda c: bpy.ops.dessin.command_line('INVOKE_DEFAULT'))
                     return {'RUNNING_MODAL'}
                 if hit[0] == 'layout' or (hit[0] == 'view' and is_layout(context.scene)):
                     # onglet d'une mise en page (ou retour au modèle) : la commande en cours se termine, puis la scène change
-                    # EN: layout tab (or back to the model): the running command ends, then the scene changes
                     kind, val = hit[0], hit[1]
                     done = self.exit(context)
                     tab_click(context, kind, val)
                     return done
+                if hit[0] in ('quad', 'quadname', 'quadmenu'):
+                    self.in_view(context, lambda c: quad_click(c, hit[0]))       # bouton des 4 vues, titre d'une vue
+                    return {'RUNNING_MODAL'}
                 if hit[0] == 'view':
-                    bpy.ops.dessin.view_restore('INVOKE_DEFAULT', name=hit[1])
+                    bar_view_click(context, hit[1])      # (4 vues : c'est la vue active qui change)
                     return {'RUNNING_MODAL'}
                 if hit[0] == 'viewmenu':
-                    new_view_dialog_later(context)
+                    bars_owner_do(context, new_view_dialog_later)      # (4 vues : le menu des vues de la vue active)
                     return {'RUNNING_MODAL'}
                 if hit[0] == 'osnap':
                     vbar_toggle(context, hit[1])
@@ -1231,16 +1163,12 @@ class DessinBase(bpy.types.Operator):
         if et in {'Z', 'Y'} and event.value == 'PRESS' and (event.ctrl or event.oskey) and self.points:
             # Ctrl+Z en pleine commande : l'annulation de Blender reviendrait sur l'opération PRÉCÉDENTE pendant que la commande
             # tient encore ses objets (erreurs, aperçus orphelins). Elle agit donc sur la commande elle-même.
-            # EN: Ctrl+Z mid-command: Blender's undo would go back on the PREVIOUS operation while the command
-            #     still holds its objects (errors, orphaned previews). So it acts on the command itself.
             if et == 'Z' and not event.shift:
                 return self.undo_step(context, event)
             return {'RUNNING_MODAL'}        # rétablir : sans objet tant que la commande est en cours
-            # EN: redo: not applicable while the command is running
 
         if et == 'ESC' and event.value == 'PRESS':
             return self.exit(context)   # Échap : annule la commande en cours et quitte l'outil
-            # EN: Esc: cancels the running command and leaves the tool
 
         if et in {'RET', 'NUMPAD_ENTER', 'SPACE'} and event.value == 'PRESS':
             if not any(self.typed) and not event.is_repeat:
@@ -1256,9 +1184,8 @@ class DessinBase(bpy.types.Operator):
                           and pref("cmd_line") and pref("cmd_key") == 'SPACE')
             res = self.exit(context)
             if idle_space:      # outil armé, rien en cours : Espace quitte l'outil ET ouvre la ligne de commande
-                # EN: tool armed, nothing running: Space leaves the tool AND opens the command line
                 try:
-                    bpy.ops.dessin.command_line('INVOKE_DEFAULT')
+                    self.in_view(context, lambda c: bpy.ops.dessin.command_line('INVOKE_DEFAULT'))
                 except RuntimeError:
                     pass
             return res
@@ -1270,7 +1197,6 @@ class DessinBase(bpy.types.Operator):
         if et == 'LEFTMOUSE':
             if event.alt or event.oskey:
                 return {'PASS_THROUGH'}      # Alt/Cmd+clic gauche = navigation (orbite), pas un clic d'outil
-                # EN: Alt/Cmd + left click = navigation (orbit), not a tool click
             if event.value == 'PRESS' and not event.ctrl:
                 self.update_cursor(context, event)
                 if self.cur is not None:
@@ -1279,10 +1205,8 @@ class DessinBase(bpy.types.Operator):
                     far_origin_check(self, context, self.cur)
                     if self.points:
                         self.remember_typed()       # valeur tapée puis validée d'un clic : retenue elle aussi
-                        # EN: value typed then confirmed with a click: it is remembered too
                     self.click(context)
                     oneshot_clear()                 # accrochage ponctuel : il ne vaut que pour ce point
-                    # EN: one-time snap: it only applies to this point
                     if self.finished:
                         return self.exit(context)
             return {'RUNNING_MODAL'}
@@ -1296,10 +1220,8 @@ class DessinBase(bpy.types.Operator):
                     st = context.scene.dessin
                     if et == 'F3':
                         st.osnap_disable = not st.osnap_disable   # F3 : accrochages objet on / off, comme AutoCAD
-                        # EN: F3: object snaps on / off, like AutoCAD
                     elif et == 'F9':
                         st.grid_snap = not st.grid_snap           # F9 : accrochage à la grille, comme Rhino et AutoCAD
-                        # EN: F9: grid snap, like Rhino and AutoCAD
                     elif et == 'F8':
                         st.ortho = not st.ortho
                     else:
@@ -1316,7 +1238,6 @@ class DessinBase(bpy.types.Operator):
                 k = "XYZ".index(et)
                 if self.PLANAR and not self.LOCK_3D and abs(AXES3[k].dot(plane_axes(self.axis)[2])) >= 0.5:
                     return {'RUNNING_MODAL'}  # cet axe sort du plan de construction : sans effet ici
-                    # EN: this axis leaves the construction plane: no effect here
                 self.lock = None if self.lock == k else k
                 self.update_cursor(context, event)
                 return {'RUNNING_MODAL'}
@@ -1334,7 +1255,6 @@ class DessinBase(bpy.types.Operator):
                 return {'RUNNING_MODAL'}
 
         # Navigation (clic droit mappé sur l'orbite/pan, molette, pavé numérique...) et le reste
-        # EN: Navigation (right click mapped to orbit/pan, wheel, numpad...) and everything else
         return {'PASS_THROUGH'}
 
 
@@ -1351,3 +1271,6 @@ def _late_imports():
     )
     global is_layout, tab_click
     from .layout import is_layout, tab_click
+    global bar_view_click, bars_owner_do, quad_click
+    from .command_line import bar_view_click, bars_owner_do
+    from .quadview import quad_click

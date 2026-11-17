@@ -331,7 +331,8 @@ chk("... les anciens noms restent acceptés (dpan, detailscale, fitdetail, updat
 chk("... MODEL revient au modèle ; PAGESETUP, PLOT, REGEN comme dans AutoCAD", (first("model"), first("pagesetup"), first("plot"), first("regen")) == ("Model", "Page Setup", "Export PDF", "Update Viewports"),
     (first("model"), first("pagesetup"), first("plot"), first("regen")))
 labels = [e["label"] for e in m.cmd_entries() if e["kind"] in ("tool", "act")]
-chk("le mot « Detail » n'apparaît plus dans les noms de commandes ; « Viewport » y est", not [l for l in labels if "Detail" in l] and len([l for l in labels if "Viewport" in l]) >= 5,
+chk("le mot « Detail » ne désigne plus une fenêtre dans les noms de commandes (seule « Detail View », la vue agrandie d'AutoCAD, le porte) ; « Viewport » y est",
+    [l for l in labels if "Detail" in l] == ["Detail View"] and len([l for l in labels if "Viewport" in l]) >= 5,
     [l for l in labels if "etail" in l or "iewport" in l])
 r = bpy.ops.dessin.viewport_paper()
 chk("PS sur la feuille : rien à faire (on y est déjà)", r == {'CANCELLED'} and BC.window.scene == L, r)
@@ -340,8 +341,8 @@ chk("dans le modèle : « ms » lance Match Surface, comme avant", first("ms") =
 r = bpy.ops.dessin.viewport_paper()
 chk("PS depuis le modèle : la mise en page s'ouvre", r == {'FINISHED'} and BC.window.scene == L, (r, BC.window.scene.name))
 src = open(_os.path.join(_os.path.dirname(_SRC), "layout.py"), encoding="utf-8").read()
-ui = [l.strip() for l in src.split("\n") if ("bl_label" in l or "name=" in l or "text=" in l) and ("Detail" in l)]
-chk("panneaux et boutons : plus aucun libellé « Detail »", not ui, ui[:4])
+ui = [l.strip() for l in src.split("\n") if ("bl_label" in l or "name=" in l or "text=" in l) and ("Detail" in l) and "Detail View" not in l]
+chk("panneaux et boutons : plus aucun libellé « Detail » pour une fenêtre (« Detail View » est la vue agrandie)", not ui, ui[:4])
 menu_calls = []
 class Lay:
     def __init__(self): self.__dict__["enabled"] = True

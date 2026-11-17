@@ -7,7 +7,7 @@ import numpy as np
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector, geometry
 
-from .core import edit_add_geometry, plane_axes
+from .core import copy_shift, edit_add_geometry, plane_axes
 from .drawing import get_shader
 from .tools_draw import _PlanBody
 from .solids import (
@@ -768,10 +768,11 @@ def expand_groups(context, objs):
     return out
 
 
-def duplicate_hierarchy(obj, parent=None):
-    """Copie obj (données comprises) et tous ses enfants : un groupe copié reste un groupe complet."""
+def duplicate_hierarchy(obj, parent=None, linked=False):
+    """Copie obj (données comprises) et tous ses enfants : un groupe copié reste un groupe complet.
+    linked : les copies partagent la géométrie de l'original (Instance de 3ds Max, Alt+D de Blender)."""
     dup = obj.copy()
-    if obj.data is not None:
+    if obj.data is not None and not linked:
         dup.data = obj.data.copy()
     for coll in obj.users_collection:
         coll.objects.link(dup)
@@ -779,7 +780,7 @@ def duplicate_hierarchy(obj, parent=None):
         dup.parent = parent
         dup.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
     for ch in obj.children:
-        duplicate_hierarchy(ch, dup)
+        duplicate_hierarchy(ch, dup, linked)
     return dup
 
 
@@ -949,6 +950,172 @@ def copy_moved_edit(items):
             g.select_set(True)
         bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+
+
+def extrude_moved_edit(items):
+    """Comme copy_moved_edit, mais la partie déplacée reste reliée à l'original par de nouvelles faces (Maj + glisser
+    des arêtes ou des faces dans 3ds Max = extrusion) : faces -> extrusion de la région, arêtes -> nouvelles faces,
+    sommets seuls -> nouvelles arêtes. L'original revient en place, la partie extrudée devient la sélection."""
+    for obj, idx, w0 in items:
+        try:
+            bm = bmesh.from_edit_mesh(obj.data)
+        except (ValueError, ReferenceError):
+            continue
+        bm.verts.ensure_lookup_table()
+        verts = [bm.verts[i] for i in idx]
+        vset = set(verts)
+        faces = [f for f in bm.faces if f.select and all(v in vset for v in f.verts)]
+        edges = [e for e in bm.edges if e.select and e.verts[0] in vset and e.verts[1] in vset]
+        if faces:
+            ret = bmesh.ops.extrude_face_region(bm, geom=faces)
+            bmesh.ops.delete(bm, geom=[f for f in faces if f.is_valid], context='FACES')   # (comme l'extrusion de Blender)
+        elif edges:
+            ret = bmesh.ops.extrude_edge_only(bm, edges=edges)
+        else:
+            ret = bmesh.ops.extrude_vert_indiv(bm, verts=verts)
+            ret = {"geom": list(ret.get("verts", [])) + list(ret.get("edges", []))}
+        inv = np.linalg.inv(np.array(obj.matrix_world, dtype=np.float64))
+        for v, p in zip(verts, w0):                  # l'original revient en place ; la copie extrudée reste où on l'a posée
+            if v.is_valid:
+                q = inv @ np.array((p[0], p[1], p[2], 1.0))
+                v.co = Vector((q[0], q[1], q[2]))
+        for g in list(bm.verts) + list(bm.edges) + list(bm.faces):
+            g.select_set(False)
+        for g in ret["geom"]:
+            if g.is_valid:
+                g.select_set(True)
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+
+
+def drag_copy_commit(context, items, edit, ctrl=False):
+    """Fin d'un glisser avec la touche de copie (objet, sous-objets, poignée du Gumball).
+    Alt (Rhino) : une copie. Maj (3ds Max) : en mode objet, la fenêtre Clone Options (copie ou instance, nombre, nom) ;
+    en mode édition, une extrusion (Ctrl + Maj : une copie détachée)."""
+    if edit:
+        if copy_shift() and not ctrl:
+            extrude_moved_edit(items)
+        else:
+            copy_moved_edit(items)
+        return
+    if copy_shift():
+        clone_dialog(context, items)
+    else:
+        copy_moved_objects(context, items)
+
+
+# ---- Clone Options (3ds Max) : après Maj + glisser un objet ----
+_CLONE = {"items": []}            # [(nom de l'objet, matrice monde d'origine, matrice monde posée)]
+
+
+def clone_dialog(context, items):
+    """Les originaux reviennent en place ; la fenêtre Clone Options décide des copies (Annuler : aucune)."""
+    _CLONE["items"] = []
+    for obj, mw in items:
+        try:
+            _CLONE["items"].append((obj.name, mw.copy(), obj.matrix_world.copy()))
+            obj.matrix_world = mw
+        except ReferenceError:
+            continue
+    if not _CLONE["items"]:
+        return
+    try:
+        bpy.ops.dessin.clone_options('INVOKE_DEFAULT')
+    except RuntimeError:
+        clone_make(context, 'COPY', 1, "")          # (pas de fenêtre possible : une copie, comme avant)
+
+
+def clone_name_next(name, k):
+    """k-ième nom après `name` : Box002 -> Box003, Box004... ; sans chiffres à la fin : Box.001, Box.002..."""
+    import re
+    if k <= 0:
+        return name
+    mt = re.match(r"^(.*?)(\d+)$", name)
+    if mt:
+        head, num = mt.group(1), mt.group(2)
+        return f"{head}{int(num) + k:0{len(num)}d}"
+    return f"{name}.{k:03d}"
+
+
+def clone_name_default(name):
+    """Nom proposé pour la copie, comme 3ds Max : le nom suivant libre (Box001 -> Box002, Cube -> Cube.001)."""
+    k = 1
+    while bpy.data.objects.get(clone_name_next(name, k)) is not None and k < 9999:
+        k += 1
+    return clone_name_next(name, k)
+
+
+def clone_make(context, mode, count, name):
+    """Crée `count` copies (ou instances) de chaque objet, chacune décalée du même déplacement que la précédente."""
+    made = []
+    for oname, mw0, mw1 in _CLONE["items"]:
+        obj = bpy.data.objects.get(oname)
+        if obj is None:
+            continue
+        step = mw1 @ mw0.inverted_safe()
+        m = mw0
+        for k in range(max(1, int(count))):
+            m = step @ m
+            dup = duplicate_hierarchy(obj, linked=(mode == 'INSTANCE'))
+            dup.matrix_world = m
+            if name and len(_CLONE["items"]) == 1:
+                dup.name = clone_name_next(name, k)
+            made.append(dup)
+    _CLONE["items"] = []
+    for o in context.view_layer.objects:
+        try:
+            o.select_set(False)
+        except RuntimeError:
+            pass
+    for dup in made:
+        try:
+            dup.select_set(True)
+        except RuntimeError:
+            pass
+    if made:
+        context.view_layer.objects.active = made[-1]
+    return made
+
+
+class DESSIN_OT_clone_options(bpy.types.Operator):
+    """Fenêtre Clone Options de 3ds Max, après Maj + glisser un objet (réglage Shift + drag)."""
+    bl_idname = "dessin.clone_options"
+    bl_label = "Clone Options"
+    bl_description = "Copy or instance the dragged objects, as many times as you want (3ds Max)"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    mode: bpy.props.EnumProperty(
+        name="Object",
+        items=(('COPY', "Copy", "Independent copy, with its own geometry"),
+               ('INSTANCE', "Instance", "Linked copy: it shares its geometry with the original, changing one changes all "
+                "(Alt+D in Blender)")),
+        default='COPY')
+    count: bpy.props.IntProperty(name="Number of Copies", default=1, min=1, max=999,
+                                 description="Each copy is moved again by the same amount as the first one")
+    name: bpy.props.StringProperty(name="Name", default="", description="Name of the copy (the next ones are numbered)")
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_CLONE["items"])
+
+    def invoke(self, context, event):
+        self.name = clone_name_default(_CLONE["items"][0][0]) if len(_CLONE["items"]) == 1 else ""
+        return context.window_manager.invoke_props_dialog(self, width=260)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.row().prop(self, "mode", expand=True)
+        col.prop(self, "count")
+        if len(_CLONE["items"]) == 1:
+            col.prop(self, "name")
+
+    def execute(self, context):
+        made = clone_make(context, self.mode, self.count, self.name.strip())
+        self.report({'INFO'}, f"{len(made)} {'instance' if self.mode == 'INSTANCE' else 'copy'}(ies) made")
+        return {'FINISHED'} if made else {'CANCELLED'}
+
+    def cancel(self, context):
+        _CLONE["items"] = []
 
 
 def _late_imports():

@@ -16,6 +16,7 @@ from . import layout_engine as le
 from .core import cp_set, cp_state, idle_tool, lang
 from .base import DessinBase
 from .drawing import find_window_region, get_shader, line_px, px_scale
+from .layers import draw_layer_print_table, draw_object_print_width, layer_print_width
 from .tools_draw import DESSIN_OT_rectangle
 
 
@@ -32,6 +33,7 @@ SHEET = "wd_layout_gen"          # objet généré de la feuille (papier, cadre,
 COL = "wd_layout_col"            # collection d'une mise en page (valeur : 'sheet', 'details', 'annot', 'dims')
 Z_PAPER = -0.5
 Z_FILL = -0.05
+Z_IMAGE = -0.1                   # images (logo, photos) : au-dessus du papier, sous les traits
 ISO_TILT = math.acos(1.0 / math.sqrt(3.0))
 ISO_TURN = {'ISO_SE': 45.0, 'ISO_SW': -45.0, 'ISO_NE': 135.0, 'ISO_NW': -135.0}
 
@@ -186,6 +188,8 @@ def detail_hidden(d):
 def detail_caption(d):
     if d.label.strip():
         return d.label.strip()
+    if d.callout_of and d.callout_tag.strip():
+        return _tr("Detail") + " " + d.callout_tag.strip()
     if d.view == 'CUSTOM':
         return d.view_label.strip() or ("Perspective" if d.persp else "View")
     name = VIEW_LABELS.get(d.view, d.view)
@@ -201,17 +205,21 @@ def _tr(text):
     return {"Top": "Dessus", "Front": "Face", "Right": "Droite", "Left": "Gauche", "Back": "Arrière", "Bottom": "Dessous",
             "Isometric": "Isométrie", "View": "Vue", "Perspective": "Perspective", "PROJECT": "PROJET", "TITLE": "TITRE",
             "DRAWN BY": "DESSINÉ PAR", "DATE": "DATE", "SCALE": "ÉCHELLE", "SHEET": "PLANCHE", "REV": "IND.",
-            "FORMAT": "FORMAT", "As noted": "Voir vues", "landscape": "paysage", "portrait": "portrait"}.get(text, text)
+            "FORMAT": "FORMAT", "As noted": "Voir vues", "landscape": "paysage", "portrait": "portrait",
+            "Detail": "Détail", "Scale": "Échelle", "CLIENT": "CLIENT", "NOTES": "NOTES", "PHASE": "PHASE",
+            "ADDRESS": "ADRESSE"}.get(text, text)
 
 
 def layout_collection(scene, key, create=True):
-    """Collection (calque) d'une mise en page : 'sheet' (feuille), 'details', 'annot' (annotations), 'dims' (cotes)."""
+    """Collection (calque) d'une mise en page : 'sheet' (feuille), 'details', 'annot' (annotations), 'dims' (cotes),
+    'title' (cartouche libre, dessiné à la main)."""
     for c in scene.collection.children:
         if c.get(COL) == key:
             return c
     if not create:
         return None
-    name = {"sheet": "Sheet", "details": "Viewports", "annot": "Annotations", "dims": "Layout dimensions"}[key]
+    name = {"sheet": "Sheet", "details": "Viewports", "annot": "Annotations", "dims": "Layout dimensions",
+            "title": "Title block"}[key]
     c = bpy.data.collections.new(name)
     c[COL] = key
     scene.collection.children.link(c)
@@ -245,8 +253,98 @@ def shown_color(color):
     return (r, g, b)
 
 
-def print_color(color, mode):
-    return (0.0, 0.0, 0.0) if mode == 'BLACK' else shown_color(color)
+def print_color(color, mode, own=None):
+    """Couleur imprimée d'un trait. mode : 'BLACK' (tout en noir), 'COLOR' (couleur du calque / de l'objet), 'GRAY' (ces
+    couleurs en niveaux de gris). own : couleur d'impression propre au calque ; elle l'emporte dans tous les modes."""
+    if own is not None:
+        col = tuple(own[:3])
+    elif mode == 'BLACK':
+        return (0.0, 0.0, 0.0)
+    else:
+        col = shown_color(color)
+    if mode == 'GRAY':
+        g = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
+        return (g, g, g)
+    return col
+
+
+# --------------------------------------------------------------------------
+# Réglages d'impression des calques (comme AutoCAD : imprimé ou non, épaisseur ; comme Rhino : couleur d'impression)
+# --------------------------------------------------------------------------
+
+PRINT_DEFAULT = (True, 0.0, None)        # (imprimé, épaisseur en mm ou 0 : celle de la mise en page, couleur ou None)
+NOPLOT_GREY = (0.8, 0.8, 0.82)           # à l'écran, sur la feuille : ce qui ne sera pas imprimé
+
+
+def print_styles():
+    """Réglages d'impression de chaque calque du fichier : {nom: (imprimé, épaisseur, couleur)}. Un sous-calque sans
+    réglage propre suit son calque parent ; un calque parent non imprimé entraîne ses sous-calques."""
+    out = {}
+    try:
+        cols = list(bpy.data.collections)
+    except (AttributeError, RuntimeError):
+        return out
+    parent = {}
+    for c in cols:
+        for ch in c.children:
+            parent[ch.name] = c.name
+    by_name = {c.name: c for c in cols}
+
+    def get(name, depth=0):
+        st = out.get(name)
+        if st is not None:
+            return st
+        st = PRINT_DEFAULT
+        c = by_name.get(name)
+        pg = getattr(c, "dessin_layer", None) if c is not None else None
+        if pg is not None:
+            plot, lw = bool(pg.plot), layer_print_width(pg)
+            col = tuple(pg.print_color[:3]) if pg.use_print_color else None
+            up = parent.get(name)
+            if up is not None and depth < 32:
+                pp = get(up, depth + 1)
+                plot, lw, col = plot and pp[0], lw or pp[1], col if col is not None else pp[2]
+            st = (plot, lw, col)
+        out[name] = st
+        return st
+
+    for c in cols:
+        get(c.name)
+    return out
+
+
+def print_width(role, L, own=0.0, layer=0.0):
+    """Épaisseur imprimée (mm) d'un trait : celle de l'objet, sinon celle de son calque, sinon celle de la mise en page
+    pour ce genre de trait. Les arêtes cachées ne sont jamais plus épaisses que les visibles du même calque."""
+    w = own or layer
+    if role in ('hid', 'hid_show'):
+        return min(L.lw_hidden, w) if w else L.lw_hidden
+    if w:
+        return w
+    return L.lw_visible if role == 'vis' else L.lw_annot
+
+
+def model_touch(scene):
+    """Le modèle a changé d'une façon que Blender ne signale pas toujours (épaisseur d'impression d'un objet) : les
+    détails qui le montrent seront redessinés."""
+    try:
+        sc = scene if (scene is not None and not is_layout(scene)) else None
+        if sc is not None:
+            _STATE["model_ver"][sc.name] = _STATE["model_ver"].get(sc.name, 0) + 1
+    except (AttributeError, ReferenceError):
+        pass
+
+
+def print_styles_changed():
+    """Un réglage d'impression d'un calque a changé : les mises en page le montrent tout de suite."""
+    if _STATE["busy"]:
+        return
+    try:
+        for sc in layouts():
+            apply_lineweights(sc)
+        _redraw()
+    except (AttributeError, ReferenceError, RuntimeError):
+        pass
 
 
 def _new_curve(name, paths, z=0.0):
@@ -296,6 +394,17 @@ def _layout_update(self, context):
         _redraw()
 
 
+def _layout_labels_update(self, context):
+    if _STATE["busy"]:
+        return
+    scene = self.id_data
+    if is_layout(scene):
+        for o in details(scene):
+            detail_dress_refresh(o)             # (l'étiquette seulement : les traits du modèle ne sont pas relus)
+        scene["wd_dress"] = dress_signature(scene)
+        _redraw()
+
+
 def _layout_lw_update(self, context):
     if _STATE["busy"]:
         return
@@ -333,6 +442,42 @@ def _detail_preset_update(self, context):
         self.scale = le.SCALE_DEN[self.scale_preset]        # (sa propre fonction update redessine le détail)
 
 
+TITLE_POS_ITEMS = (
+    ('BR', "Bottom right", "A block in the bottom right corner of the frame"),
+    ('BL', "Bottom left", "A block in the bottom left corner of the frame"),
+    ('TR', "Top right", "A block in the top right corner of the frame"),
+    ('TL', "Top left", "A block in the top left corner of the frame"),
+    ('BOTTOM', "Bottom strip", "A band across the whole width of the frame, at the bottom"),
+    ('RIGHT', "Right strip", "A band along the whole height of the frame, on the right"),
+)
+LABEL_STYLE_ITEMS = (
+    ('SIMPLE', "Name and scale", "One line under the viewport: the view name, then the scale"),
+    ('TITLE', "Drawing title", "A numbered drawing title: the number in a circle, the name above a line and the scale below it"),
+)
+
+
+class DESSIN_PG_title_cell(bpy.types.PropertyGroup):
+    """Une case du cartouche. Les cases se suivent de gauche à droite ; « new_row » commence une nouvelle rangée."""
+    kind: bpy.props.EnumProperty(name="Content", default='TEXT', update=_layout_update,
+                                 items=(('TEXT', "Text", "A caption and a text (fields like <Scale> are filled in automatically)"),
+                                        ('LOGO', "Logo", "The logo image chosen above, fitted in the cell")))
+    label: bpy.props.StringProperty(name="Caption", default="", update=_layout_update,
+                                    description="Small caption written in the top left corner of the cell (PROJECT, DATE...)")
+    text: bpy.props.StringProperty(name="Text", default="", update=_layout_update,
+                                   description="Text of the cell. Fields are replaced automatically: <Project> <Title> <DrawnBy> <Date> "
+                                               "<Sheet> <Sheets> <Rev> <Scale> <Format> <Layout> <File> <Today>")
+    new_row: bpy.props.BoolProperty(name="Starts a new row", default=False, update=_layout_update,
+                                    description="This cell starts a new row of the title block (otherwise it sits to the right of the previous one)")
+    width: bpy.props.FloatProperty(name="Width", default=1.0, min=0.05, soft_max=10.0, precision=2, update=_layout_update,
+                                   description="Width of the cell compared with the other cells of its row (2 = twice as wide as a cell of 1)")
+    height: bpy.props.FloatProperty(name="Row height", default=10.0, min=0.0, soft_max=60.0, precision=1, update=_layout_update,
+                                    description="Height of the row, in millimeters (the tallest cell of the row wins; 0: the row takes the room left)")
+    size: bpy.props.FloatProperty(name="Text height", default=3.5, min=1.0, max=40.0, precision=1, update=_layout_update,
+                                  description="Height of the text, in millimeters (it shrinks by itself when the text is too long for the cell)")
+    align: bpy.props.EnumProperty(name="Align", default='LEFT', update=_layout_update,
+                                  items=(('LEFT', "Left", ""), ('CENTER', "Center", ""), ('RIGHT', "Right", "")))
+
+
 class DESSIN_PG_layout(bpy.types.PropertyGroup):
     is_layout: bpy.props.BoolProperty(default=False)
     model: bpy.props.PointerProperty(type=bpy.types.Scene, name="Model", description="Scene shown by the viewports of this layout")
@@ -359,7 +504,17 @@ class DESSIN_PG_layout(bpy.types.PropertyGroup):
     t_revision: bpy.props.StringProperty(name="Revision", default="", update=_layout_update)
     t_scale: bpy.props.StringProperty(name="Scale", default="", update=_layout_update,
                                       description="Scale written in the title block (empty: the scale of the viewports, or 'As noted' when they differ)")
-    label_size: bpy.props.FloatProperty(name="Label height", default=3.0, min=1.0, max=20.0, update=_layout_update,
+    t_logo: bpy.props.StringProperty(name="Logo", default="", subtype='FILE_PATH', update=_layout_update,
+                                     description="Image file shown in the Logo cell of the title block (PNG with transparency, JPEG...)")
+    title_pos: bpy.props.EnumProperty(name="Position", items=TITLE_POS_ITEMS, default='BR', update=_layout_update,
+                                      description="Where the title block sits in the frame")
+    title_w: bpy.props.FloatProperty(name="Width", default=170.0, min=20.0, soft_max=420.0, precision=1, update=_layout_update,
+                                     description="Width of the title block, in millimeters (a bottom strip takes the whole width of the frame)")
+    title_cells: bpy.props.CollectionProperty(type=DESSIN_PG_title_cell)
+    title_cell_index: bpy.props.IntProperty(default=0)
+    label_style: bpy.props.EnumProperty(name="Viewport labels", items=LABEL_STYLE_ITEMS, default='SIMPLE', update=_layout_labels_update,
+                                        description="How the label of each viewport is written")
+    label_size: bpy.props.FloatProperty(name="Label height", default=3.0, min=1.0, max=20.0, update=_layout_labels_update,
                                         description="Height of the label written under each viewport (view name and scale), in millimeters")
     lw_visible: bpy.props.FloatProperty(name="Visible edges", default=0.35, min=0.01, max=2.0, step=5, precision=2,
                                         update=_layout_lw_update, description="Printed line width of the visible edges, in millimeters")
@@ -375,8 +530,11 @@ class DESSIN_PG_layout(bpy.types.PropertyGroup):
     show_lineweights: bpy.props.BoolProperty(name="Show line widths", default=False, update=_layout_lw_update,
                                              description="Displays the lines with their printed width (zoom in to see it). Off: thin lines, like a CAD screen")
     print_color: bpy.props.EnumProperty(name="Colors", default='BLACK',
-                                        items=(('BLACK', "Black", "Everything is printed in black"),
-                                               ('COLOR', "Layer colors", "Lines keep the color of their object / layer (white becomes black)")))
+                                        items=(('BLACK', "Black", "Everything is printed in black, except the layers that have "
+                                                                  "their own print color (Print Settings of the Layers)"),
+                                               ('COLOR', "Layer colors", "Lines keep the color of their object / layer (white becomes "
+                                                                         "black), or the print color of their layer"),
+                                               ('GRAY', "Grayscale", "The layer colors, printed in shades of gray")))
     auto_update: bpy.props.BoolProperty(name="Update when opened", default=True,
                                         description="The viewports are redrawn from the model each time the layout is opened after the model changed. "
                                                     "Turn it off for very heavy models and use Update Viewports")
@@ -423,6 +581,14 @@ class DESSIN_PG_detail(bpy.types.PropertyGroup):
     label: bpy.props.StringProperty(name="Caption", default="", update=_detail_update,
                                     description="Text written under the viewport before the scale (empty: the name of the view)")
     hidden_layers: bpy.props.StringProperty(default="", update=_detail_update)
+    number: bpy.props.StringProperty(name="Number", default="", update=_detail_update,
+                                     description="Number written in the circle of the drawing title (empty: numbered automatically, "
+                                                 "or the letter of a detail view)")
+    show_scalebar: bpy.props.BoolProperty(name="Scale bar", default=False, update=_detail_update,
+                                          description="Draws a graphic scale under the viewport; it follows the scale of the viewport")
+    callout_of: bpy.props.IntProperty(default=0)          # vue de détail : identifiant de la fenêtre d'origine (0 : aucune)
+    callout_tag: bpy.props.StringProperty(name="Letter", default="", update=_detail_update,
+                                          description="Letter of this detail view, written on the viewport it comes from")
 
 
 # --------------------------------------------------------------------------
@@ -472,10 +638,8 @@ def title_scale_text(scene):
 
 
 def title_rect(L):
-    """Rectangle du cartouche (x0, y0, x1, y1), en bas à droite du cadre."""
-    x0, y0, x1, _y1 = frame_rect(L)
-    tw = min(170.0, x1 - x0)
-    return x1 - tw, y0, x1, y0 + 34.0
+    """Rectangle du cartouche (x0, y0, x1, y1) dans le cadre, selon sa position et ses rangées."""
+    return title_layout(L)[0]
 
 
 def paper_rebuild(scene):
@@ -496,51 +660,38 @@ def paper_rebuild(scene):
             _line_width(cu, L.lw_frame, show)
             _sheet_object(scene, "Frame", cu, 'frame')
         if L.show_title:
-            x0, y0, x1, y1 = title_rect(L)
-            tw = x1 - x0
-            cr = x1 - min(34.0, tw * 0.25)            # colonne de droite (planche, date, format)
-            cm = cr - min(30.0, tw * 0.2)             # colonne du milieu (échelle, indice)
-            r1, r2 = y0 + 9.0, y0 + 21.0              # lignes
-            outer = [([(x0, y1), (x0, y0)], False), ([(x0, y1), (x1, y1)], False)]
-            if not L.show_frame:
-                outer = [_rect_path(x0, y0, x1, y1)]
-            cu = _new_curve("Title block", outer)
-            _line_width(cu, L.lw_frame, show)
-            _sheet_object(scene, "Title block", cu, 'frame')
-            inner = [([(x0, r1), (x1, r1)], False), ([(x0, r2), (x1, r2)], False), ([(cr, y0), (cr, y1)], False),
-                     ([(cm, y0), (cm, r2)], False)]
-            cu = _new_curve("Title block lines", inner)
-            _line_width(cu, L.lw_annot, show)
-            _sheet_object(scene, "Title block lines", cu, 'title')
-            pad, lab = 1.5, 1.8
-            cells = (
-                (_tr("PROJECT"), L.t_project, x0, r2, cr, y1, 5.0),
-                (_tr("SHEET"), L.t_number, cr, r2, x1, y1, 6.5),
-                (_tr("TITLE"), L.t_title, x0, r1, cm, r2, 4.0),
-                (_tr("SCALE"), title_scale_text(scene), cm, r1, cr, r2, 4.0),
-                (_tr("DATE"), L.t_date, cr, r1, x1, r2, 3.2),
-                (_tr("DRAWN BY"), L.t_author, x0, y0, cm, r1, 3.0),
-                (_tr("REV"), L.t_revision, cm, y0, cr, r1, 3.0),
-                (_tr("FORMAT"), paper_label(L), cr, y0, x1, r1, 3.0),
-            )
-            for label, value, cx0, cy0, cx1, cy1, size in cells:
-                _sheet_text(scene, label, cx0 + pad, cy1 - pad - lab, lab, grey=0.35, max_w=cx1 - cx0 - 2 * pad)
-                room = cy1 - cy0 - lab - 2.5 * pad
-                size = min(size, max(room, 1.5))
-                _sheet_text(scene, value, cx0 + pad, cy0 + pad * 0.9, size, max_w=cx1 - cx0 - 2 * pad)
-        scene["wd_title_scale"] = title_scale_text(scene)
+            title_draw(scene, L, show)
+        scene["wd_title_sig"] = title_signature(scene)
+
+
+def child_style(o, role, L, show, styles):
+    """Aspect à l'écran d'un trait généré d'un détail, selon les réglages d'impression de son calque : son épaisseur
+    (si « Show line widths ») et sa couleur — gris clair quand son calque n'est pas imprimé, comme le cadre d'une fenêtre
+    qui ne s'imprime pas."""
+    st = styles.get(o.get("wd_layer", ""), PRINT_DEFAULT)
+    base = o.get("wd_col")
+    if base is not None:
+        col = NOPLOT_GREY if not st[0] else tuple(base)[:3]
+        if any(abs(a - b) > 1e-6 for a, b in zip(o.color[:3], col)):
+            o.color = (col[0], col[1], col[2], 1.0)
+    if o.type == 'CURVE' and role in ('vis', 'hid_show', 'ann'):
+        _line_width(o.data, print_width(role, L, float(o.get("wd_lw", 0.0) or 0.0), st[1]), show)
 
 
 def apply_lineweights(scene):
-    """Reporte les épaisseurs de trait (affichage à l'écran) sur les objets générés de la mise en page."""
+    """Reporte sur les objets générés de la mise en page ce qui se voit à l'écran des réglages d'impression : épaisseurs
+    de trait (si « Show line widths ») et calques non imprimés (en gris clair)."""
     L = scene.dessin_layout
     show = L.show_lineweights
+    styles = print_styles()
     for o in scene.objects:
+        role = o.get(GEN) or o.get(SHEET)
+        if role in ('vis', 'hid_show', 'ann', 'fill_show'):
+            child_style(o, role, L, show, styles)
+            continue
         if o.type != 'CURVE':
             continue
-        role = o.get(GEN) or o.get(SHEET)
-        w = {"vis": L.lw_visible, "hid_show": L.lw_hidden, "ann": L.lw_annot, "frame": L.lw_frame, "title": L.lw_annot,
-             "detail": L.lw_border}.get(role)
+        w = {"frame": L.lw_frame, "title": L.lw_annot, "detail": L.lw_border, "mark": L.lw_annot}.get(role)
         if w is not None:
             _line_width(o.data, w, show and not (role == 'detail' and not o.dessin_detail.show_border))
 
@@ -634,6 +785,204 @@ def detail_label_text(d):
     return f"{cap}   {le.fmt_scale(d.scale)}"
 
 
+DRESS_ROLES = ('label', 'mark')         # habillage d'un détail : étiquette / titre de dessin, échelle graphique, repères
+
+
+def detail_number(obj):
+    """Numéro écrit dans le cercle du titre de dessin : celui tapé, la lettre d'une vue de détail, sinon son rang sur la feuille."""
+    d = obj.dessin_detail
+    if d.number.strip():
+        return d.number.strip()
+    if d.callout_of and d.callout_tag.strip():
+        return d.callout_tag.strip()
+    sc = obj_scene(obj)
+    k = 0
+    for o in (details(sc) if sc is not None else [obj]):
+        od = o.dessin_detail
+        if od.callout_of and od.callout_tag.strip():
+            continue
+        k += 1
+        if o == obj:
+            return str(k)
+    return "1"
+
+
+def nice_step(x):
+    """Valeur ronde (1, 2 ou 5 x 10^n) la plus proche de x."""
+    if x <= 0.0:
+        return 1.0
+    e = math.floor(math.log10(x))
+    best = None
+    for k in (e - 1, e, e + 1):
+        for m in (1.0, 2.0, 5.0):
+            v = m * 10.0 ** k
+            if best is None or abs(math.log(v / x)) < abs(math.log(best / x)):
+                best = v
+    return best
+
+
+def scalebar_spec(d, model, max_len):
+    """Échelle graphique d'un détail : (longueur d'une division sur le papier en mm, valeur d'une division dans l'unité
+    affichée du modèle, nombre de divisions, nom de l'unité). None si elle ne tient pas."""
+    try:
+        unit_f, unit_label = unit_info(model)
+    except (AttributeError, TypeError):
+        unit_f, unit_label = 1.0, ""
+    umm = unit_f * mm_per_unit(model)                    # millimètres réels par unité affichée
+    if umm <= 0.0 or d.scale <= 0.0:
+        return None
+    step = nice_step(12.0 * d.scale / umm)               # une division d'environ 12 mm sur le papier
+    step_mm = step * umm / d.scale
+    n = 4
+    while n > 1 and step_mm * n > max_len:
+        n -= 1
+    if step_mm * n > max_len or step_mm < 1.0:
+        return None
+    return step_mm, step, n, unit_label
+
+
+def callouts_of(obj):
+    """Vues de détail tirées de ce détail (elles portent son identifiant)."""
+    sc = obj_scene(obj)
+    wid = obj.get("wd_id")
+    if sc is None or wid is None:
+        return []
+    return [o for o in details(sc) if o != obj and o.dessin_detail.callout_of == wid]
+
+
+def callout_rect(parent, child):
+    """Rectangle (x0, y0, x1, y1), dans le repère du détail d'origine, de la zone du modèle que montre une vue de détail."""
+    pd, cd = parent.dessin_detail, child.dessin_detail
+    mp = detail_map(parent)
+    if mp is None or cd.persp:
+        return None
+    try:
+        uv = np.asarray(detail_projector(pd).uv(np.array([tuple(cd.center)], dtype=float)), dtype=float)[0]
+    except (ValueError, TypeError, AttributeError):
+        return None
+    cx, cy = (float(uv[0]) - mp[2]) * mp[4], (float(uv[1]) - mp[3]) * mp[4]
+    k = cd.scale / max(pd.scale, 1e-9)
+    w, h = cd.width * k, cd.height * k
+    return cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0
+
+
+def _dress_text(obj, name, body, x, y, size, align='LEFT', align_y='BOTTOM_BASELINE', grey=0.0):
+    fc = bpy.data.curves.new(name, 'FONT')
+    fc.body = body
+    fc.size = size
+    fc.align_x = align
+    fc.align_y = align_y
+    o = _child(obj, f"{obj.name} {name.lower()}", fc, 'label', (grey, grey, grey))
+    o.location = (x, y, 0.0)
+    return o
+
+
+def detail_dress(obj, L, d):
+    """Crée l'habillage d'un détail (enfants générés) : étiquette ou titre de dessin numéroté, échelle graphique, repères
+    de ses vues de détail. Coordonnées dans le repère du détail (origine en son centre)."""
+    show = L.show_lineweights
+    s = L.label_size
+    x0, x1, yb = -d.width / 2.0, d.width / 2.0, -d.height / 2.0
+    marks = []
+    if d.show_label:
+        if L.label_style == 'TITLE':
+            r = s * 1.25
+            cx, cy = x0 + r, yb - s * 0.7 - r
+            cap = detail_caption(d)
+            sct = "" if d.persp else _tr("Scale") + " " + le.fmt_scale(d.scale)
+            tw = max(len(cap) * 0.58 * s * 1.15, len(sct) * 0.58 * s * 0.8, 20.0)
+            lx0 = cx + r
+            marks.append(([(cx + r * math.cos(t), cy + r * math.sin(t)) for t in np.linspace(0.0, 2.0 * math.pi, 49)[:-1]], True))
+            marks.append(([(lx0, cy), (lx0 + s * 0.6 + tw + 1.0, cy)], False))
+            num = detail_number(obj)
+            _dress_text(obj, "Number", num, cx, cy, s * (1.15 if len(num) <= 2 else 2.3 / len(num)), 'CENTER', 'CENTER')
+            _dress_text(obj, "Label", cap, lx0 + s * 0.6, cy + s * 0.4, s * 1.15)
+            if sct:
+                _dress_text(obj, "Scale", sct, lx0 + s * 0.6, cy - s * 0.4 - s * 0.8, s * 0.8, grey=0.25)
+        else:
+            _dress_text(obj, "Label", detail_label_text(d), x0, yb - s * 1.35, s)
+    if d.show_scalebar and not d.persp:
+        model = detail_model(obj)
+        spec = scalebar_spec(d, model, d.width * 0.6) if model is not None else None
+        if spec is not None:
+            step_mm, step, n, unit = spec
+            ts = s * 0.7
+            bh = max(1.0, s * 0.4)
+            top = yb - s * 0.6 - ts - 0.8
+            bx0 = x1 - step_mm * n
+            marks.append(_rect_path(bx0, top - bh, x1, top))
+            for i in range(1, n):
+                marks.append(([(bx0 + i * step_mm, top - bh), (bx0 + i * step_mm, top)], False))
+            for i in range(0, n, 2):                 # une division sur deux est noire : traits serrés (pleins à l'impression)
+                yy = top - bh + 0.15
+                while yy < top - 0.05:
+                    marks.append(([(bx0 + i * step_mm, yy), (bx0 + (i + 1) * step_mm, yy)], False))
+                    yy += 0.15
+            for i in range(n + 1):
+                txt = "%g" % (i * step) + ((" " + unit) if (i == n and unit) else "")
+                _dress_text(obj, "Scale bar", txt, bx0 + i * step_mm, top + 0.8, ts, 'CENTER' if i < n else 'LEFT' if unit else 'CENTER')
+    for child in callouts_of(obj):                   # zone montrée par chaque vue de détail, avec sa lettre
+        rc = callout_rect(obj, child)
+        if rc is None:
+            continue
+        cx0, cy0, cx1, cy1 = rc
+        S = np.array([(cx0, cy0, cx1, cy0), (cx1, cy0, cx1, cy1), (cx1, cy1, cx0, cy1), (cx0, cy1, cx0, cy0)], dtype=np.float64)
+        S = le.clip_segments(S, x0, yb, x1, -yb)
+        for a in S:
+            marks.append(([(a[0], a[1]), (a[2], a[3])], False))
+        tag = child.dessin_detail.callout_tag.strip()
+        if tag and len(S):
+            tx = min(max(cx1, x0), x1)
+            ty = min(max(cy1, yb), -yb)
+            _dress_text(obj, "Detail mark", tag, tx + s * 0.3, ty + s * 0.3, s * 1.1)
+    if marks:
+        cu = _new_curve("Viewport marks", marks)
+        _line_width(cu, L.lw_annot, show)
+        _child(obj, f"{obj.name} marks", cu, 'mark')
+
+
+def dress_signature(scene):
+    """Ce dont dépend l'habillage des détails d'une feuille : numéros des titres, vues de détail et leur cadrage."""
+    out = []
+    for o in details(scene):
+        d = o.dessin_detail
+        item = "%s|%s" % (o.get("wd_id"), detail_number(o))
+        if d.callout_of:                # vue de détail : son repère sur la fenêtre d'origine suit son cadrage
+            item += "|%d|%s|%.5f,%.5f,%.5f|%.6g|%.4f,%.4f" % (d.callout_of, d.callout_tag, d.center[0], d.center[1], d.center[2],
+                                                               d.scale, d.width, d.height)
+        out.append(item)
+    return scene.dessin_layout.label_style + ";" + ";".join(out)
+
+
+def detail_dress_refresh(obj):
+    """Refait seulement l'habillage d'un détail (ses traits ne sont pas relus)."""
+    scene = obj_scene(obj)
+    if scene is None or not is_detail(obj):
+        return
+    with quiet():
+        _remove([c for c in detail_children(obj) if c.get(GEN) in DRESS_ROLES])
+        detail_dress(obj, scene.dessin_layout, obj.dessin_detail)
+        obj["wd_nchild"] = len(detail_children(obj))
+
+
+def dress_sync(scene):
+    """Un détail supprimé décale les numéros ; une vue de détail déplacée ou recadrée déplace son repère : l'habillage de
+    tous les détails est alors refait. Retourne True si quelque chose a changé."""
+    try:
+        sig = dress_signature(scene)
+        if scene.get("wd_dress", "") == sig:
+            return False
+        first = "wd_dress" not in scene.keys()
+        scene["wd_dress"] = sig
+        if first:                       # feuille que l'on découvre : son habillage est celui de ses détails, déjà à jour
+            return False
+        for o in details(scene):
+            detail_dress_refresh(o)
+        return True
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+
+
 def detail_rebuild(obj, force=False):
     """Redessine un détail : cadre, traits du modèle (visibles, cachés, annotations), aplats et étiquette.
     force : relit le modèle même si rien ne semble avoir changé."""
@@ -658,36 +1007,49 @@ def detail_rebuild(obj, force=False):
             cu_, cv_ = proj.uv(np.array(d.center, dtype=np.float64))[0]
             k = mm_per_unit(model) / max(d.scale, 1e-9)
             geo = le.to_paper(P, float(cu_), float(cv_), k, d.width, d.height)
-            for role, color, paths in geo["lines"]:
+            styles = print_styles()
+
+            def tagged(o, role, col, tag):
+                """Le trait garde son calque et son épaisseur propre (réglages d'impression), et sa couleur d'écran."""
+                o["wd_layer"] = tag[0]
+                if tag[1]:
+                    o["wd_lw"] = float(tag[1])
+                if role != 'hid':
+                    o["wd_col"] = [float(c) for c in col[:3]]
+                    child_style(o, role, L, show, styles)
+                return o
+
+            for role, color, paths, tag in geo["lines"]:
                 col = shown_color(color)
                 if role == 'hid':
                     # la source (non tiretée, masquée) sert à l'export ; les tirets ne servent qu'à l'affichage
-                    _child(obj, f"{obj.name} hidden", _new_curve("Viewport hidden", paths), 'hid', col, hidden=True)
+                    tagged(_child(obj, f"{obj.name} hidden", _new_curve("Viewport hidden", paths), 'hid', col, hidden=True),
+                           'hid', col, tag)
                     cu = _new_curve("Viewport hidden dashes", le.dash_paths(paths))
-                    _line_width(cu, L.lw_hidden, show)
                     shade = tuple(0.35 + 0.65 * c for c in col) if max(col) < 0.05 else col
-                    _child(obj, f"{obj.name} hidden dashes", cu, 'hid_show', shade)
+                    tagged(_child(obj, f"{obj.name} hidden dashes", cu, 'hid_show', shade), 'hid_show', shade, tag)
                     n += 2
                 else:
                     cu = _new_curve("Viewport " + role, paths)
-                    _line_width(cu, L.lw_visible if role == 'vis' else L.lw_annot, show)
-                    _child(obj, f"{obj.name} {'lines' if role == 'vis' else 'annotations'}", cu, role, col)
+                    tagged(_child(obj, f"{obj.name} {'lines' if role == 'vis' else 'annotations'}", cu, role, col), role, col, tag)
                     n += 1
             if geo["fills"]:
-                loops, counts, colors, flags = [], [], [], []
+                loops, counts, colors, flags, lays = [], [], [], [], []
                 shown = {}
-                for color, lps, polys, is_text in geo["fills"]:
+                for color, lps, polys, is_text, tag in geo["fills"]:
                     loops += [(lp, True) for lp in lps]
                     counts.append(len(lps))
                     colors += list(color[:3])
                     flags.append(1 if is_text else 0)
-                    shown.setdefault(shown_color(color), []).extend(polys)
+                    lays.append(tag[0])
+                    shown.setdefault((shown_color(color), tag[0]), []).extend(polys)
                 src = _child(obj, f"{obj.name} fills", _new_curve("Viewport fills", loops), 'fill', hidden=True)
                 src["wd_fill_n"] = counts
                 src["wd_fill_c"] = colors
                 src["wd_fill_t"] = flags
+                src["wd_fill_l"] = "\n".join(lays)          # calque de chaque aplat (imprimé ou non, couleur d'impression)
                 n += 1
-                for col, polys in shown.items():
+                for (col, lay_), polys in shown.items():
                     verts, faces = [], []
                     for poly in polys:
                         base = len(verts)
@@ -699,16 +1061,9 @@ def detail_rebuild(obj, force=False):
                     me.from_pydata(verts, [], faces)
                     fo = _child(obj, f"{obj.name} fills shown", me, 'fill_show', col, z=Z_FILL)
                     fo["wd_nosnap"] = 1            # les triangles d'un texte ne sont pas des points d'accrochage
+                    tagged(fo, 'fill_show', col, (lay_, 0.0))
                     n += 1
-        if d.show_label:
-            fc = bpy.data.curves.new("Viewport label", 'FONT')
-            fc.body = detail_label_text(d)
-            fc.size = L.label_size
-            fc.align_x = 'LEFT'
-            fc.align_y = 'BOTTOM_BASELINE'
-            lab = _child(obj, f"{obj.name} label", fc, 'label')
-            lab.location = (-d.width / 2.0, -d.height / 2.0 - L.label_size * 1.35, 0.0)
-            n += 1
+        detail_dress(obj, L, d)
         obj["wd_nchild"] = len(detail_children(obj))
         obj.rotation_euler = (0.0, 0.0, 0.0)
         obj.scale = (1.0, 1.0, 1.0)
@@ -798,10 +1153,12 @@ def detail_fit(obj, pick_scale=True, rebuild=True):
 
 
 def title_refresh(scene):
-    """Le cartouche affiche l'échelle des détails : il est refait quand elle change."""
+    """Le cartouche affiche des champs automatiques (échelle des détails, nombre de planches...) : il est refait quand l'un
+    d'eux change. Les textes de la feuille qui contiennent des champs (<Scale>, <Sheet>...) sont remis à jour aussi."""
     try:
-        if scene.dessin_layout.show_title and scene.get("wd_title_scale", "") != title_scale_text(scene):
+        if scene.dessin_layout.show_title and scene.get("wd_title_sig", "") != title_signature(scene):
             paper_rebuild(scene)
+        fields_refresh(scene)
     except (AttributeError, ReferenceError):
         pass
 
@@ -1197,6 +1554,12 @@ def layout_create(model, name="Layout", paper='A3', orientation='LANDSCAPE', mar
     layout_collection(sc, 'sheet')
     layout_collection(sc, 'details')
     layout_collection(sc, 'annot')
+    others = [x for x in layouts() if x != sc]
+    with quiet():
+        if others:              # même cartouche (modèle, logo, projet, auteur) que la dernière mise en page du fichier
+            title_copy(max(others, key=lambda x: x.dessin_layout.order), sc, free=bool(title))
+        if not len(L.title_cells):
+            title_apply_template(L, 'CLASSIC')       # les cases du cartouche d'origine, prêtes à être modifiées
     paper_rebuild(sc)
     layout_current_layer(sc)
     return sc
@@ -1223,7 +1586,13 @@ def usable_rect(L):
     """Zone libre de la feuille pour les détails : le cadre, moins la bande du cartouche."""
     x0, y0, x1, y1 = frame_rect(L)
     if L.show_title:
-        y0 = title_rect(L)[3]
+        tx0, ty0, tx1, ty1 = title_rect(L)
+        if L.title_pos == 'RIGHT':
+            x1 = tx0
+        elif L.title_pos in ('TR', 'TL'):
+            y1 = ty0
+        else:
+            y0 = ty1
     return x0, y0, x1, y1
 
 
@@ -1502,6 +1871,11 @@ def layout_open(context, scene, fit=None):
     win = context.window
     if win is None or scene is None or not is_layout(scene):
         return False
+    try:        # 4 vues affichées : elles se referment d'abord, la mise en page s'ouvre dans la vue qui reste
+        if quad_leave_then(context, lambda: layout_open(bpy.context, scene, fit)):
+            return True
+    except (AttributeError, ReferenceError, RuntimeError):
+        pass
     prev = win.scene
     key = win.as_pointer()
     areas = _view3d_areas(win)
@@ -1626,6 +2000,11 @@ def layout_on_load(*args):
     _STATE["busy"] = False
     _STATE["items"] = None
     _STATE["hold"] = 0.0
+    try:
+        title_edit_reset()
+        quad_reset()                # (les 4 vues : plus rien en cours, les zones de l'ancien fichier n'existent plus)
+    except NameError:               # (module pas encore entièrement chargé)
+        pass
 
 
 def _modal_running(win):
@@ -1642,7 +2021,7 @@ def layout_ink(scene):
     try:
         for o in scene.objects:
             c = o.color
-            if c[0] > 0.99 and c[1] > 0.99 and c[2] > 0.99 and not o.get(GEN) and not o.get(SHEET):
+            if c[0] > 0.99 and c[1] > 0.99 and c[2] > 0.99 and not o.get(GEN) and not o.get(SHEET) and o.type != 'EMPTY':
                 o.color = (0.0, 0.0, 0.0, 1.0)
                 n += 1
     except (AttributeError, ReferenceError, RuntimeError):
@@ -1686,8 +2065,12 @@ def layout_sync(scene, win=None):
     with quiet():
         if dims_sync(scene):
             changed = True
+    if dress_sync(scene):
+        changed = True
     if changed:
         title_refresh(scene)
+    elif fields_refresh(scene):
+        changed = True
     return changed
 
 
@@ -1734,6 +2117,7 @@ _DRAW = {"handle": None}
 
 def layout_draw_cb():
     """Cadre des détails sélectionnés, en bleu net : la couleur de sélection du thème, claire, se perd sur le papier blanc."""
+    title_edit_draw()                      # cartouche en cours de modification : case active, traits qui se glissent
     try:
         context = bpy.context
         sc = context.scene
@@ -1805,54 +2189,77 @@ def _shown(o, view_layer):
 
 def layout_entities(scene):
     """Tout ce qui s'imprime sur une mise en page, en mm de papier : entités ('L', ...) et ('F', ...) du moteur d'export,
-    dans l'ordre du tracé (aplats de hachures, traits, puis textes)."""
+    dans l'ordre du tracé (aplats de hachures, traits, puis textes). Les réglages d'impression des calques s'appliquent :
+    un calque non imprimé n'y est pas, son épaisseur et sa couleur d'impression remplacent celles de la mise en page."""
     L = scene.dessin_layout
     mode = L.print_color
     try:
         vl = scene.view_layers[0]
     except IndexError:
         vl = None
+    styles = print_styles()
+
+    def style_of(o):
+        return styles.get(le.print_tag(o)[0], PRINT_DEFAULT)
+
     under, lines, over = [], [], []
+    images = sheet_image_entities(scene, vl, styles)    # logo du cartouche, images posées sur la feuille : sous les traits
     for o in scene.objects:
         role = o.get(SHEET)
         if role in ('frame', 'title') and o.type == 'CURVE' and _shown(o, vl):
-            lines.append(('L', _spline_paths(o), L.lw_frame if role == 'frame' else L.lw_annot, (0.0, 0.0, 0.0), None,
-                          "Frame" if role == 'frame' else "Title block"))
+            st = style_of(o)
+            if st[0]:
+                lines.append(('L', _spline_paths(o), L.lw_frame if role == 'frame' else L.lw_annot,
+                              print_color((0.0, 0.0, 0.0), mode, st[2]), None, "Frame" if role == 'frame' else "Title block"))
     for det in details(scene):
         if not _shown(det, vl):
             continue
-        if det.dessin_detail.show_border:
+        if det.dessin_detail.show_border and style_of(det)[0]:     # (fenêtre sur un calque non imprimé : son cadre seul ne l'est pas)
             lines.append(('L', _spline_paths(det), L.lw_border, (0.0, 0.0, 0.0), None, "Viewport borders"))
         for c in det.children:
             role = c.get(GEN)
-            if c.type != 'CURVE' or role not in ('vis', 'hid', 'ann', 'fill'):
+            if c.type != 'CURVE' or role not in ('vis', 'hid', 'ann', 'fill', 'mark'):
                 continue
-            col = print_color(c.color, mode)
-            if role == 'vis':
-                lines.append(('L', _spline_paths(c), L.lw_visible, col, None, "Visible"))
-            elif role == 'hid':
-                lines.insert(0, ('L', _spline_paths(c), L.lw_hidden, col, (3.0, 1.5), "Hidden"))
-            elif role == 'ann':
-                lines.append(('L', _spline_paths(c), L.lw_annot, col, None, "Annotations"))
-            else:
+            if role == 'mark':                 # titre de dessin, échelle graphique, repère de vue de détail
+                lines.append(('L', _spline_paths(c), L.lw_annot, (0.0, 0.0, 0.0), None, "Annotations"))
+                continue
+            if role == 'fill':
                 loops = [P for P, _closed in _spline_paths(c)]
                 counts = list(c.get("wd_fill_n", [len(loops)]))
                 colors = list(c.get("wd_fill_c", []))
                 flags = list(c.get("wd_fill_t", []))
+                lays = str(c.get("wd_fill_l", "")).split("\n")
                 i = 0
                 for k, n in enumerate(counts):
                     grp = loops[i:i + n]
                     i += n
+                    st = styles.get(lays[k] if k < len(lays) else "", PRINT_DEFAULT)
+                    if not st[0]:
+                        continue
                     rgb = tuple(colors[k * 3:k * 3 + 3]) if len(colors) >= k * 3 + 3 else (0.0, 0.0, 0.0)
                     is_text = bool(flags[k]) if k < len(flags) else True
-                    (over if is_text else under).append(('F', grp, print_color(rgb, mode), "Text" if is_text else "Fills"))
+                    (over if is_text else under).append(('F', grp, print_color(rgb, mode, st[2]), "Text" if is_text else "Fills"))
+                continue
+            st = styles.get(c.get("wd_layer", ""), PRINT_DEFAULT)
+            if not st[0]:
+                continue
+            base = c.get("wd_col")
+            col = print_color(tuple(base)[:3] if base is not None else c.color, mode, st[2])
+            w = print_width(role, L, float(c.get("wd_lw", 0.0) or 0.0), st[1])
+            if role == 'vis':
+                lines.append(('L', _spline_paths(c), w, col, None, "Visible"))
+            elif role == 'hid':
+                lines.insert(0, ('L', _spline_paths(c), w, col, (3.0, 1.5), "Hidden"))
+            else:
+                lines.append(('L', _spline_paths(c), w, col, None, "Annotations"))
     # tout ce qui est dessiné sur la feuille (outils habituels) et les textes générés : lus comme un modèle vu de dessus
     items = le.collect_model(scene, (), True)
     for o in scene.objects:                       # textes générés (cartouche, étiquettes) : exclus de collect_model
-        if o.type == 'FONT' and (o.get(SHEET) or o.get(GEN)) and _shown(o, vl) and (o.parent is None or _shown(o.parent, vl)):
+        if (o.type == 'FONT' and (o.get(SHEET) or o.get(GEN)) and o.get(SHEET) != 'hint' and _shown(o, vl)
+                and (o.parent is None or _shown(o.parent, vl))):
             try:
                 V, E, cnt, T = le._temp_mesh(o.data, le._setup_font)
-                it = le.Item('ANNOT', o.name, tuple(o.color[:3]))
+                it = le.Item('ANNOT', o.name, tuple(o.color[:3]), (le.print_tag(o)[0], 0.0) if o.get(SHEET) else ("", 0.0))
                 it.text = True
                 A = np.array(_local_matrix(o), dtype=np.float64)
                 le._fill_item(it, V @ A[:3, :3].T + A[:3, 3], E, cnt, T)
@@ -1864,12 +2271,17 @@ def layout_entities(scene):
         w, h = paper_size(L)
         geo = le.to_paper(P, w / 2.0, h / 2.0, 1.0, w, h)
         off = np.array((w / 2.0, h / 2.0))
-        for _role, color, paths in geo["lines"]:
-            lines.append(('L', [(p + off, c) for p, c in paths], L.lw_annot, print_color(color, mode), None, "Sheet"))
-        for color, loops, _polys, is_text in geo["fills"]:
-            (over if is_text else under).append(('F', [lp + off for lp in loops], print_color(color, mode),
-                                                 "Text" if is_text else "Fills"))
-    return under + lines + over
+        for _role, color, paths, tag in geo["lines"]:
+            st = styles.get(tag[0], PRINT_DEFAULT)
+            if st[0]:
+                lines.append(('L', [(p + off, c) for p, c in paths], print_width('ann', L, tag[1], st[1]),
+                              print_color(color, mode, st[2]), None, "Sheet"))
+        for color, loops, _polys, is_text, tag in geo["fills"]:
+            st = styles.get(tag[0], PRINT_DEFAULT)
+            if st[0]:
+                (over if is_text else under).append(('F', [lp + off for lp in loops], print_color(color, mode, st[2]),
+                                                     "Text" if is_text else "Fills"))
+    return images + under + lines + over
 
 
 def layout_page(scene):
@@ -2153,6 +2565,9 @@ class DESSIN_OT_layout_duplicate(bpy.types.Operator):
                         "label_size", "lw_visible", "lw_hidden", "lw_annot", "lw_frame", "lw_border", "show_lineweights",
                         "print_color", "auto_update"):
                 setattr(D, key, getattr(L, key))
+            title_copy(src, sc, free=False)
+            D.show_title = L.show_title
+            _remove(title_free_objects(sc))        # (cartouche libre repris d'une autre planche : celui de l'original le remplace, ci-dessous)
             for key in DIM_STYLE_FIELDS + ("couleur", "epaisseur_trait"):      # même style de cote que l'original
                 try:
                     setattr(sc.dessin, key, getattr(src.dessin, key))
@@ -2164,7 +2579,7 @@ class DESSIN_OT_layout_duplicate(bpy.types.Operator):
             if o.get(SHEET) or (o.get(GEN) and o.get(GEN) != 'detail'):
                 continue
             c = o.copy()
-            if o.data is not None:
+            if o.data is not None and o.type != 'EMPTY':        # (une image posée sur la feuille garde son image)
                 c.data = o.data.copy()
             mapping[o] = c
             key = next((uc.get(COL) for uc in o.users_collection if uc.get(COL)), None)
@@ -2234,6 +2649,7 @@ class DESSIN_OT_layout_detail(DessinBase):
                       "The view is the one chosen in the Layout panel; the scale is fitted, then set in the panel")
 
     TITLE = "Viewport"
+    CORNER_STAGES = (1,)
     PROP = ()
     NEEDED = 2
     NUMFIELDS = 2
@@ -2750,13 +3166,15 @@ class _LayoutExport:
                         if m is not None and o.name in _STATE["built"] and _STATE["built"][o.name] != model_version(m):
                             detail_rebuild(o)
                             redrawn += 1
+            for sc in scs:                     # champs automatiques (nombre de planches, échelle...) : à jour sur chaque feuille
+                title_refresh(sc)
             if redrawn:
                 _undo_push(context.window, "Update Viewports")
             written = self.write(path, [layout_page(sc) for sc in scs])
         except OSError as e:
             self.report({'ERROR'}, f"Cannot write the file: {e}")
             return {'CANCELLED'}
-        except RuntimeError as e:              # (DWG : pas de convertisseur sur cet ordinateur, ou il a échoué)
+        except RuntimeError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         self.report({'INFO'}, f"{len(scs)} layout(s) exported in {time.monotonic() - t0:.1f} s: {written}")
@@ -2817,32 +3235,6 @@ class DESSIN_OT_layout_export_dxf(_LayoutExport, bpy.types.Operator):
 
     def write(self, path, pages):
         le.write_dxf(path, pages)
-        return path
-
-
-class DESSIN_OT_layout_export_dwg(_LayoutExport, bpy.types.Operator):
-    bl_idname = "dessin.layout_export_dwg"
-    bl_label = "Export DWG"
-    bl_description = ("DWG in paper millimeters for AutoCAD: the same drawing as Export DXF, converted by the free ODA File "
-                      "Converter installed on this computer")
-    EXT = ".dwg"
-    filter_glob: bpy.props.StringProperty(default="*.dwg", options={'HIDDEN'})
-
-    def write(self, path, pages):
-        import shutil
-        import tempfile
-        from .import_dxf import cad_convert
-        tmp = tempfile.mkdtemp(prefix="wd_layout_dwg_")
-        try:
-            dxf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".dxf")
-            le.write_dxf(dxf, pages)
-            made = cad_convert(dxf, "DWG")
-            try:
-                shutil.move(made, path)
-            finally:
-                shutil.rmtree(os.path.dirname(made), ignore_errors=True)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
         return path
 
 
@@ -3215,6 +3607,10 @@ def viewport_keys_register():
         kmi = km.keymap_items.new(DESSIN_OT_detail_pan.bl_idname, 'LEFTMOUSE', 'DOUBLE_CLICK')
         kmi.properties.pick = True
         _VP_KEYS.append((km, kmi))
+        # double-clic sur le cartouche : on le modifie sur la feuille (essayé après les fenêtres, qui laissent passer le clic)
+        kmi = km.keymap_items.new("dessin.title_edit", 'LEFTMOUSE', 'DOUBLE_CLICK')
+        kmi.properties.pick = True
+        _VP_KEYS.append((km, kmi))
     except (AttributeError, RuntimeError, TypeError):
         pass
 
@@ -3240,7 +3636,7 @@ def bar_tabs(context):
         model = sc
         names = tab_names(sc)
         active = current_view_name(context)
-    tabs = [('view', n, view_label(model, n), n == active) for n in names]
+    tabs = [('view', n, t, on) for n, t, on in view_tabs(context, model, active)] if model is not None else []
     tabs += [('layout', s.name, s.name, s == sc) for s in layouts()]
     tabs.append(('viewmenu', "+", "+", False))
     return tabs
@@ -3272,7 +3668,8 @@ def menu_layouts(layout, context):
         layout.operator(DESSIN_OT_layout_close.bl_idname, text="Back to the Model", icon='LOOP_BACK')
 
 
-def draw_page_settings(lay, L):
+def draw_page_settings(lay, L, fields=True):
+    """fields : avec les textes du cartouche (la boîte Page Setup) ; le panneau Page les laisse au panneau Title Block."""
     lay.use_property_split = True
     lay.use_property_decorate = False
     col = lay.column(align=True)
@@ -3284,7 +3681,7 @@ def draw_page_settings(lay, L):
     col.prop(L, "margin")
     col.prop(L, "show_frame")
     col.prop(L, "show_title")
-    if L.show_title:
+    if L.show_title and fields:
         col = lay.column(align=True)
         col.prop(L, "t_project")
         col.prop(L, "t_title")
@@ -3301,6 +3698,7 @@ class DESSIN_PT_layout(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Layout"
+    bl_order = 0
 
     def draw(self, context):
         lay = self.layout
@@ -3328,6 +3726,7 @@ class DESSIN_PT_layout_page(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Layout"
+    bl_order = 1
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -3338,7 +3737,7 @@ class DESSIN_PT_layout_page(bpy.types.Panel):
         if not is_layout(context.scene):
             return
         L = context.scene.dessin_layout
-        draw_page_settings(self.layout, L)
+        draw_page_settings(self.layout, L, fields=False)
         col = self.layout.column(align=True)
         col.prop(L, "model")
         col.prop(L, "auto_update")
@@ -3350,6 +3749,7 @@ class DESSIN_PT_layout_detail(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Layout"
+    bl_order = 4
 
     @classmethod
     def poll(cls, context):
@@ -3364,6 +3764,7 @@ class DESSIN_PT_layout_detail(bpy.types.Panel):
         row = lay.row(align=True)
         row.operator(DESSIN_OT_layout_detail.bl_idname, text="Draw a Viewport", icon='ADD')
         row.prop(L, "new_view", text="")
+        lay.operator("dessin.detail_callout", text="Detail View (enlarged)", icon='ZOOM_SELECTED')
         row = lay.row(align=True)
         row.operator(DESSIN_OT_detail_update.bl_idname, text="Update", icon='FILE_REFRESH')
         row.operator(DESSIN_OT_detail_pan.bl_idname, text="Pan", icon='VIEW_PAN')
@@ -3407,6 +3808,18 @@ class DESSIN_PT_layout_detail(bpy.types.Panel):
         col.prop(d, "show_label")
         if d.show_label:
             col.prop(d, "label")
+            if L.label_style == 'TITLE':
+                col.prop(d, "number")
+        if d.callout_of:
+            col.prop(d, "callout_tag")
+        sub = col.column(align=True)
+        sub.enabled = not d.persp
+        sub.prop(d, "show_scalebar")
+        col = box.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(L, "label_style")
+        col.prop(L, "label_size")
         box.operator(DESSIN_OT_detail_text_match.bl_idname, icon='FONT_DATA')
 
 
@@ -3416,6 +3829,7 @@ class DESSIN_PT_layout_layers(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Layout"
+    bl_order = 5
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -3453,6 +3867,7 @@ class DESSIN_PT_layout_print(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Layout"
+    bl_order = 6
 
     @classmethod
     def poll(cls, context):
@@ -3474,23 +3889,53 @@ class DESSIN_PT_layout_print(bpy.types.Panel):
             col.prop(L, "lw_frame")
             col.prop(L, "show_lineweights")
             col.prop(L, "print_color")
+            lay.label(text="Per layer: Print by Layer, below", icon='INFO')
         col = lay.column(align=True)
         col.operator(DESSIN_OT_layout_export_pdf.bl_idname, icon='FILE')
         row = col.row(align=True)
         row.operator(DESSIN_OT_layout_export_svg.bl_idname, text="SVG")
         row.operator(DESSIN_OT_layout_export_dxf.bl_idname, text="DXF")
-        row.operator(DESSIN_OT_layout_export_dwg.bl_idname, text="DWG")
+
+
+class DESSIN_PT_layout_print_layers(bpy.types.Panel):
+    bl_label = "Print by Layer"
+    bl_idname = "DESSIN_PT_layout_print_layers"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Layout"
+    bl_order = 7
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_layout(context.scene)
+
+    def draw(self, context):
+        lay = self.layout
+        sc = context.scene
+        if not is_layout(sc):
+            return
+        lay.label(text="Printed, print color and line width of each layer:")
+        model = layout_model(sc)
+        if model is not None:
+            lay.label(text="Layers of the model", icon='OUTLINER_COLLECTION')
+            draw_layer_print_table(lay, model.collection)
+        lay.label(text="Layers of this sheet", icon='FILE')
+        draw_layer_print_table(lay, sc.collection)
+        draw_object_print_width(lay, context)
+        lay.label(text="Not printed: shown in light gray on the sheet", icon='INFO')
 
 
 LAYOUT_CLASSES = (
-    DESSIN_PG_layout, DESSIN_PG_detail,
+    DESSIN_PG_title_cell, DESSIN_PG_layout, DESSIN_PG_detail,
     DESSIN_OT_layout_new, DESSIN_OT_layout_open, DESSIN_OT_layout_close, DESSIN_OT_layout_next, DESSIN_OT_layout_rename,
     DESSIN_OT_layout_delete, DESSIN_OT_layout_duplicate, DESSIN_OT_layout_page_setup, DESSIN_OT_layout_erase,
     DESSIN_OT_layout_detail, DESSIN_OT_detail_add, DESSIN_OT_detail_update, DESSIN_OT_detail_fit, DESSIN_OT_detail_scale,
     DESSIN_OT_detail_view_set, DESSIN_OT_detail_layer, DESSIN_OT_detail_pan, DESSIN_OT_detail_text_match,
-    DESSIN_OT_layout_export_pdf, DESSIN_OT_layout_export_svg, DESSIN_OT_layout_export_dxf, DESSIN_OT_layout_export_dwg,
+    DESSIN_OT_layout_export_pdf, DESSIN_OT_layout_export_svg, DESSIN_OT_layout_export_dxf,
     DESSIN_OT_viewport_grip, DESSIN_OT_viewport_paper, DESSIN_MT_viewport_scale, DESSIN_GT_vp_grip, DESSIN_GT_vp_scale, DESSIN_GGT_viewport_grips,
     DESSIN_PT_layout, DESSIN_PT_layout_page, DESSIN_PT_layout_detail, DESSIN_PT_layout_layers, DESSIN_PT_layout_print,
+    DESSIN_PT_layout_print_layers,
 )
 
 
@@ -3519,6 +3964,7 @@ def layout_unregister():
     erase_keys_unregister()
     viewport_keys_unregister()
     _STATE["active_vp"] = None
+    title_edit_reset()
     try:                                   # (Pan Detail interrompu par la désactivation : son message ne doit pas rester)
         for ws in bpy.data.workspaces:
             ws.status_text_set(None)
@@ -3553,10 +3999,18 @@ def layout_unregister():
 def _late_imports():
     """Noms définis dans des modules chargés après celui-ci : ils ne servent qu'à l'exécution des outils."""
     global DIM_STYLE_FIELDS, _axis_quat, current_view_name, ensure_dim_styles, find_view, rebuild_dimension
-    global cmd_click_idle, cmd_hit, tab_names, view_label, foreign_modal, _GUMBALL_TOOLS
+    global cmd_click_idle, cmd_hit, tab_names, view_label, view_tabs, foreign_modal, _GUMBALL_TOOLS
     from .command_line import cmd_click_idle, cmd_hit
     from .gumball_handles import foreign_modal, _GUMBALL_TOOLS
     global _dim_replay_spec
     from .settings import DIM_STYLE_FIELDS, _dim_replay_spec, ensure_dim_styles, rebuild_dimension
     from .navigation import _axis_quat
-    from .views import current_view_name, find_view, tab_names, view_label
+    from .views import current_view_name, find_view, tab_names, view_label, view_tabs
+    global fields_refresh, sheet_image_entities, title_apply_template, title_copy, title_draw, title_layout, title_signature
+    global unit_info
+    from .core import unit_info
+    global quad_leave_then, quad_reset
+    from .quadview import quad_leave_then, quad_reset
+    global title_edit_draw, title_edit_reset, title_free_objects
+    from .layout_sheet import (fields_refresh, sheet_image_entities, title_apply_template, title_copy, title_draw, title_edit_draw,
+                               title_edit_reset, title_free_objects, title_layout, title_signature)

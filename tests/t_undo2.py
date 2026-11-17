@@ -135,7 +135,7 @@ def followups(tag):
     tryit("snap",snap)
     class FL:
         def __getattr__(self,n):
-            if n=='panel': return lambda *a,**k:(FL(),FL())
+            if n in ('panel','panel_prop'): return lambda *a,**k:(FL(),FL())
             return lambda *a,**k: FL()
     def panels():
         from types import SimpleNamespace as NS2

@@ -574,7 +574,7 @@ _CELL = 48.0
 
 
 def _build_screen_index(snap, persp, region_w, region_h):
-    """Calcul pur (sans accès à Blender) : projection écran + grille spatiale. Peut tourner dans un thread."""
+    """Calcul pur (sans accès à Blender) : projection écran + grille spatiale."""
     pts, hom = snap[0], snap[1]
     span = getattr(snap, "obj_span", None)
     if span is not None:
@@ -640,7 +640,7 @@ def _build_screen_index(snap, persp, region_w, region_h):
     return {"sx": sx, "sy": sy, "ok": ok, "key": ksel[srt], "order": order, "edges": None}
 
 
-_ASYNC_MIN = 150000     # au-delà, l'index écran est construit dans un thread : la souris ne gèle plus à chaque changement de vue
+_ASYNC_MIN = 150000     # au-delà, l'index écran est construit juste après le dessin (minuterie) : le dessin n'attend pas
 _ASYNC = {"busy": False}
 
 
@@ -660,6 +660,8 @@ def _screen_index(snap, persp, region, allow_async=False):
             pm = persp.copy()
 
             def work():
+                # calculé juste après ce dessin, dans Blender (pas de thread : interdit sur la plateforme d'extensions) ;
+                # le dessin en cours n'attend pas, l'accrochage revient au dessin suivant
                 try:
                     res = _build_screen_index(snap, pm, rw, rh)
                     res["sig"] = sig
@@ -667,9 +669,9 @@ def _screen_index(snap, persp, region, allow_async=False):
                 except Exception:
                     pass
                 _ASYNC["busy"] = False
-                bpy.app.timers.register(_nav_redraw_all, first_interval=0.0)
-            import threading
-            threading.Thread(target=work, daemon=True).start()
+                _nav_redraw_all()
+                return None
+            bpy.app.timers.register(work, first_interval=0.0)
         return None
     c = _build_screen_index(snap, persp, region.width, region.height)
     c["sig"] = sig
@@ -1116,6 +1118,23 @@ def main_window_region(area):
         if r.type == 'WINDOW' and (best is None or r.width * r.height > best.width * best.height):
             best = r
     return best
+
+
+def bars_frame(area, region=None):
+    """Cadre des barres du bas (onglets de vue, ligne de commande, modes) : (x, y, largeur, hauteur) en pixels de la
+    fenêtre. Une vue 3D ordinaire : sa région de dessin. Les 4 vues de Blender (Toggle Quad View) : l'ensemble des
+    quatre régions, pour que les barres n'y soient dessinées qu'une fois, centrées en bas, et non dans chaque vue."""
+    try:
+        wins = [r for r in area.regions if r.type == 'WINDOW' and r.width > 1 and r.height > 1]
+    except (AttributeError, ReferenceError):
+        wins = []
+    if len(wins) > 1:
+        x0, y0 = min(r.x for r in wins), min(r.y for r in wins)
+        return (x0, y0, max(r.x + r.width for r in wins) - x0, max(r.y + r.height for r in wins) - y0)
+    r = region if region is not None else (wins[0] if wins else None)
+    if r is None:
+        return None
+    return (r.x, r.y, r.width, r.height)
 
 
 def region_rv3d(region, area):

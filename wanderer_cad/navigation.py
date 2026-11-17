@@ -89,6 +89,15 @@ VIEW_BUTTONS = {'MIDDLE': ('MIDDLEMOUSE', False), 'RIGHT': ('RIGHTMOUSE', False)
 _VIEW_KEYMAPS = []   # (keymap, item) enregistrés dans la configuration « addon »
 
 
+def auto_perspective(context):
+    """Réglage de Blender Preferences > Navigation > Auto Perspective : en sortant d'une vue de face / dessus, passer en
+    perspective. Éteint, l'orbite garde l'orthographique (vue « User Orthographic »), comme dans Blender."""
+    try:
+        return bool(context.preferences.inputs.use_auto_perspective)
+    except AttributeError:
+        return True
+
+
 def in_side_view(context):
     """True dans une vue orthogonale alignée sur un axe (Face, Dessus, Droite, Arrière, Dessous, Gauche)."""
     rv3d = getattr(context, "region_data", None)
@@ -200,6 +209,40 @@ def navigate_or_menu(context, event, start):
     return True
 
 
+def nav_in_hovered(context, event, fn):
+    """Appelle fn(contexte) avec, pour région, la vue 3D sous la souris. Avec 4 vues à l'écran (celles de Wanderer ou le
+    Toggle Quad View de Blender), une commande en cours garde pour contexte la vue où elle a démarré : sans cela,
+    glisser dans une autre des quatre vues déplacerait la vue de départ."""
+    area = getattr(context, "area", None)
+    region = None
+    try:
+        if area is not None and event is not None:
+            x, y = event.mouse_x, event.mouse_y
+            region = find_window_region(area, x, y)
+            if region is None:          # 4 vues séparées : la commande a suivi la souris dans une autre vue 3D
+                for a in context.screen.areas:
+                    if a.type == 'VIEW_3D':
+                        region = find_window_region(a, x, y)
+                        if region is not None:
+                            area = a
+                            break
+        cur = context.region
+        same = region is None or cur is None or region.as_pointer() == cur.as_pointer()
+    except (AttributeError, ReferenceError):
+        same = True
+    if same:
+        return fn(context)
+    try:
+        ov = context.temp_override(area=area, region=region)
+        ov.__enter__()
+    except (TypeError, RuntimeError, AttributeError):
+        return fn(context)
+    try:
+        return fn(bpy.context)
+    finally:
+        ov.__exit__(None, None, None)
+
+
 def start_navigation(context, button=None):
     """Lance le pan (vues orthogonales alignées) ou l'orbite choisis. False : laisser Blender / votre keymap faire l'orbite."""
     area_type = context.area.type if context.area is not None else ''
@@ -304,8 +347,9 @@ class DESSIN_OT_trackpad_pan(bpy.types.Operator):
 
 class DESSIN_OT_trackpad_persp(bpy.types.Operator):
     bl_idname = "dessin.trackpad_persp"
-    bl_label = "Trackpad orbit to Perspective (Ctrl + Shift + two fingers)"
-    bl_description = "In Front / Top / Right... orthographic views, Ctrl + Shift + two-finger gesture switches to perspective and orbits"
+    bl_label = "Trackpad orbit out of a side view (Ctrl + Shift + two fingers)"
+    bl_description = ("In Front / Top / Right... orthographic views, Ctrl + Shift + two-finger gesture orbits. The view switches to "
+                      "perspective only if Auto Perspective is on in Preferences > Navigation")
     bl_options = {'INTERNAL'}
 
     @classmethod
@@ -316,7 +360,7 @@ class DESSIN_OT_trackpad_persp(bpy.types.Operator):
         rv3d = context.region_data
         if rv3d.view_perspective == 'CAMERA':
             return {'PASS_THROUGH'}
-        if in_side_view(context):
+        if in_side_view(context) and auto_perspective(context):
             rv3d.view_perspective = 'PERSP'
         dx = event.mouse_x - event.mouse_prev_x
         dy = event.mouse_y - event.mouse_prev_y
@@ -331,8 +375,9 @@ class DESSIN_OT_trackpad_persp(bpy.types.Operator):
 
 class DESSIN_OT_orbit_persp(bpy.types.Operator):
     bl_idname = "dessin.orbit_persp"
-    bl_label = "Orbit to Perspective (from orthographic side views)"
-    bl_description = "In Front / Top / Right... orthographic views, Ctrl + Shift + the orbit button switches to perspective and orbits"
+    bl_label = "Orbit out of a side view (from orthographic side views)"
+    bl_description = ("In Front / Top / Right... orthographic views, Ctrl + Shift + the orbit button orbits. The view switches to "
+                      "perspective only if Auto Perspective is on in Preferences > Navigation")
     bl_options = {'INTERNAL'}
 
     @classmethod
@@ -343,8 +388,9 @@ class DESSIN_OT_orbit_persp(bpy.types.Operator):
         if not in_side_view(context):
             return {'PASS_THROUGH'}
         try:
-            context.region_data.view_perspective = 'PERSP'
-            bpy.ops.view3d.rotate('INVOKE_DEFAULT')
+            if auto_perspective(context):
+                context.region_data.view_perspective = 'PERSP'
+            bpy.ops.view3d.rotate('INVOKE_DEFAULT')       # sinon Blender garde l'orthographique : vue « User Orthographic »
         except (RuntimeError, AttributeError):
             return {'PASS_THROUGH'}
         return {'FINISHED'}
@@ -412,6 +458,7 @@ class DESSIN_OT_mouse_track(bpy.types.Operator):
             if hit is not None:
                 region = find_window_region(area, event.mouse_x, event.mouse_y)
                 _CMD["mouse"][ptr] = (event.mouse_x - region.x, event.mouse_y - region.y)
+                _CMD.setdefault("mouse_org", {})[ptr] = (region.x, region.y)
                 _CMD.setdefault("mouse_t", {})[ptr] = time.monotonic()
                 hot[ptr] = True
                 area.tag_redraw()

@@ -6,6 +6,8 @@ LINEA, CIRCULO, DESPLAZA en espagnol...). En chinois, japonais et coréen, AutoC
 anglais : seuls les noms affichés sont traduits, les alias anglais restent. Les invites des commandes restent en anglais."""
 
 LANGUAGE_ITEMS = (
+    ('AUTO', "Follow Blender's language", "Same language as Blender's interface (Preferences > Interface > Translation); "
+                                           "English if Blender's language is not one of the add-on's languages"),
     ('EN', "English", "Tool names, commands and prompts in English"),
     ('FR', "Français", "Tool names, commands and prompts in French (the English names stay usable in the command line)"),
     ('DE', "Deutsch", "Tool names in German, with the command aliases of German AutoCAD and Rhino (prompts in English)"),
@@ -49,7 +51,7 @@ Distance|Abstand|Distancia|Distanza|Distância|Расстояние|Mesafe|距�
 Divide|Unterteilen|Dividir|Dividi|Dividir em partes|Поделить|Parçalara ayır|等分|ディバイダ|등분할
 Edge Surface|Fläche aus Randkurven|Superficie desde bordes|Superficie da bordi|Superfície por bordas|Поверхность по кромкам|Kenarlardan yüzey|边缘曲面|エッジサーフェス|모서리 곡면
 Explode|Zerlegen|Descomponer|Esplodi|Explodir|Расчленить|Patlat|分解|分解|분해
-Extrude Curve|Kurve extrudieren|Extruir curva|Estrudi curva|Extrudar curva|Выдавить кривую|Eğriyi uzat (ekstrüzyon)|挤出曲线|曲線を押し出し|곡선 돌출
+Extrude Curve|Kurve extrudieren|Extruir curva|Estrudi curva|Extrudar curva|Выдавить кривую|Eğriyi ekstrüze et|挤出曲线|曲線を押し出し|곡선 돌출
 Extrude Along Curve|Entlang Kurve extrudieren|Extruir a lo largo de curva|Estrudi lungo curva|Extrudar ao longo de curva|Выдавить вдоль кривой|Eğri boyunca ekstrüzyon|沿曲线挤出|曲線に沿って押し出し|곡선을 따라 돌출
 Extrude Surface|Fläche extrudieren|Extruir superficie|Estrudi superficie|Extrudar superfície|Выдавить поверхность|Yüzey ekstrüzyonu|挤出曲面|サーフェスを押し出し|곡면 돌출
 Fillet Curve|Abrunden|Empalme|Raccordo|Concordância|Сопряжение|Yuvarlat|圆角|フィレット|모깎기
@@ -98,7 +100,7 @@ Scale 2D|Skalieren 2D|Escalar 2D|Scala 2D|Escalar 2D|Масштаб 2D|Ölçekle
 Scale 1D|Skalieren 1D|Escalar 1D|Scala 1D|Escalar 1D|Масштаб 1D|Ölçekle 1B|单轴缩放|1Dスケール|1D 축척
 Scale to Size|Auf Größe skalieren|Escalar a tamaño|Scala a dimensione|Escalar para tamanho|Масштаб до размера|Boyuta ölçekle|缩放到尺寸|サイズに合わせてスケール|크기에 맞춰 축척
 Rectangle|Rechteck|Rectángulo|Rettangolo|Retângulo|Прямоугольник|Dikdörtgen|矩形|長方形|직사각형
-Mirror|Spiegeln|Reflejar|Specchio|Espelhar|Зеркало|Aynala|镜像|ミラー|대칭
+Mirror|Spiegeln|Simetría|Specchio|Espelhar|Зеркало|Aynala|镜像|ミラー|대칭
 Array: Rectangular|Anordnung: rechteckig|Matriz: rectangular|Serie: rettangolare|Matriz: retangular|Массив: прямоугольный|Dizi: dikdörtgen|阵列：矩形|配列：矩形|배열: 직사각형
 Array: Linear|Anordnung: linear|Matriz: lineal|Serie: lineare|Matriz: linear|Массив: линейный|Dizi: doğrusal|阵列：直线|配列：直線|배열: 선형
 Fillet Edge|Kante abrunden|Empalme de borde|Raccordo bordo|Concordância de aresta|Скругление ребра|Kenar yuvarlat|边缘圆角|エッジフィレット|모서리 모깎기
@@ -173,10 +175,18 @@ Merge All Faces|Koplanare Flächen vereinen|Fusionar caras coplanares|Unisci fac
 Unroll Surface|Fläche abwickeln|Desarrollar superficie|Sviluppa superficie|Planificar superfície|Развернуть поверхность|Yüzeyi aç|展开曲面|サーフェスを展開|곡면 전개
 Rebuild Surface|Fläche neu aufbauen|Reconstruir superficie|Ricostruisci superficie|Reconstruir superfície|Перестроить поверхность|Yüzeyi yeniden oluştur|重建曲面|サーフェスをリビルド|곡면 재생성
 Orient|Orientieren|Orientar|Orienta|Orientar|Ориентировать|Yönlendir|定位|配置（2点）|방향 맞추기
+Orient 3 Points|Orientieren 3 Punkte|Orientar 3 puntos|Orienta 3 punti|Orientar 3 pontos|Ориентировать по 3 точкам|3 noktayla yönlendir|三点定位|配置（3点）|3점 방향 맞추기
 Extend Curve|Kurve verlängern|Alargar curva|Estendi curva|Estender curva|Удлинить кривую|Eğriyi uzat|延伸曲线|曲線を延長|곡선 연장
 Layout|Layout|Presentación|Layout|Layout|Лист|Pafta|布局|レイアウト|배치
 Viewport|Ansichtsfenster|Ventana gráfica|Finestra|Viewport|Видовой экран|Görünüm penceresi|视口|ビューポート|뷰포트
+Detail View|Detailansicht|Vista de detalle|Vista di dettaglio|Vista de detalhe|Выносной вид|Detay görünümü|局部详图|詳細ビュー|상세 뷰
 Auto CPlane|Auto-KEbene|PlanoC automático|PianoC automatico|PlanoC automático|Авто КПлоск|Otomatik çalışma düzlemi|自动工作平面|自動作業平面|자동 작업평면
+Grid Snap|Rasterfang|Forzar rejilla|Snap griglia|Snap à grade|Привязка к сетке|Izgara yakalama|网格捕捉|グリッドスナップ|그리드 스냅
+Polar|Polar|Polar|Polare|Polar|Полярное|Kutupsal|极轴|極トラッキング|극좌표
+OSnap|Objektfang|Referencia|Snap oggetto|Snap ao objeto|Объектная привязка|Nesne yakalama|对象捕捉|オブジェクトスナップ|객체 스냅
+Quick Type|Schnelleingabe|Escritura rápida|Digitazione rapida|Digitação rápida|Быстрый ввод|Hızlı yazma|快速输入|クイック入力|빠른 입력
+Type a command|Befehl eingeben|Escriba un comando|Digita un comando|Digite um comando|Введите команду|Komut yazın|输入命令|コマンドを入力|명령 입력
+repeat|wiederholen|repetir|ripeti|repetir|повторить|tekrarla|重复|繰り返し|반복
 PushPull|Drücken/Ziehen|Empujar/tirar|Spingi/tira|Empurrar/puxar|Тянуть/толкать|İt/çek|推拉|プッシュプル|밀기/끌기
 CPlane|KEbene|PlanoC|PianoC|PlanoC|КПлоск|Çalışma düzlemi|工作平面|作業平面|작업평면
 CPlane 3 Points|KEbene 3 Punkte|PlanoC 3 puntos|PianoC 3 punti|PlanoC 3 pontos|КПлоск 3 точки|Çalışma düzlemi 3 nokta|工作平面：三点|作業平面：3点|작업평면 3점
@@ -197,7 +207,12 @@ Select All|Alles auswählen|Seleccionar todo|Seleziona tutto|Selecionar tudo|В�
 Select None|Auswahl aufheben|Deseleccionar todo|Deseleziona tutto|Desmarcar tudo|Снять выбор|Seçimi kaldır|取消选择|選択解除|선택 해제
 Invert Selection|Auswahl umkehren|Invertir selección|Inverti selezione|Inverter seleção|Инвертировать выбор|Seçimi ters çevir|反选|選択を反転|선택 반전
 Hide|Ausblenden|Ocultar|Nascondi|Ocultar|Скрыть|Gizle|隐藏|非表示|숨기기
+Local View|Lokale Ansicht|Vista local|Vista locale|Vista local|Локальный вид|Yerel görünüm|局部视图|ローカルビュー|로컬 뷰
+Quit Local View|Lokale Ansicht verlassen|Salir de la vista local|Esci dalla vista locale|Sair da vista local|Выйти из локального вида|Yerel görünümden çık|退出局部视图|ローカルビューを終了|로컬 뷰 종료
 Isolate|Isolieren|Aislar|Isola|Isolar|Изолировать|Yalıt|隔离|選択オブジェクトのみ表示|분리
+Lock|Sperren|Bloquear|Blocca|Bloquear|Заблокировать|Kilitle|锁定|ロック|잠금
+Unlock All|Alle entsperren|Desbloquear todo|Sblocca tutto|Desbloquear tudo|Разблокировать всё|Tümünün kilidini aç|全部解锁|すべてロック解除|모두 잠금 해제
+Unlock Selected|Ausgewählte entsperren|Desbloquear seleccionados|Sblocca selezionati|Desbloquear selecionados|Разблокировать выбранные|Seçilenlerin kilidini aç|解锁所选|選択してロック解除|선택 잠금 해제
 Show All|Alles einblenden|Mostrar todo|Mostra tutto|Mostrar tudo|Показать всё|Tümünü göster|全部显示|すべて表示|모두 표시
 Zoom Extents|Zoom Grenzen|Zoom extensión|Zoom estensioni|Zoom extensão|Показать всё (зум)|Tümünü sığdır|缩放至全部|全体表示|범위 줌
 Zoom Selected|Zoom Auswahl|Zoom selección|Zoom selezione|Zoom seleção|Зум на выбранное|Seçime yakınlaş|缩放至选取|選択オブジェクトをズーム|선택 줌
@@ -218,8 +233,7 @@ Page Setup|Seiteneinrichtung|Configurar página|Imposta pagina|Configurar págin
 Export PDF|PDF exportieren|Exportar PDF|Esporta PDF|Exportar PDF|Экспорт PDF|PDF dışa aktar|导出 PDF|PDFを書き出し|PDF 내보내기
 Export SVG|SVG exportieren|Exportar SVG|Esporta SVG|Exportar SVG|Экспорт SVG|SVG dışa aktar|导出 SVG|SVGを書き出し|SVG 내보내기
 Export DXF|DXF exportieren|Exportar DXF|Esporta DXF|Exportar DXF|Экспорт DXF|DXF dışa aktar|导出 DXF|DXFを書き出し|DXF 내보내기
-Export DWG|DWG exportieren|Exportar DWG|Esporta DWG|Exportar DWG|Экспорт DWG|DWG dışa aktar|导出 DWG|DWGを書き出し|DWG 내보내기
-Import DXF / DWG|DXF / DWG importieren|Importar DXF / DWG|Importa DXF / DWG|Importar DXF / DWG|Импорт DXF / DWG|DXF / DWG içe aktar|导入 DXF / DWG|DXF / DWGを読み込み|DXF / DWG 가져오기
+Import DXF|DXF importieren|Importar DXF|Importa DXF|Importar DXF|Импорт DXF|DXF içe aktar|导入 DXF|DXFを読み込み|DXF 가져오기
 Weld|Verschweißen|Soldar|Salda|Soldar|Сварить|Kaynakla|焊接|ウェルド|용접
 Bridge|Brücke|Puente|Ponte|Ponte|Мост|Köprü|桥接|ブリッジ|브리지
 Fill|Füllen|Rellenar|Riempi|Preencher|Заполнить|Doldur|填补|穴埋め|채우기
@@ -233,6 +247,7 @@ Back|Hinten|Posterior|Posteriore|Posterior|Сзади|Arka|后视图|背面|뒤
 Left|Links|Izquierda|Sinistra|Esquerda|Слева|Sol|左视图|左面|왼쪽
 Bottom|Unten|Inferior|Inferiore|Inferior|Снизу|Alt|底视图|下面|아래
 Perspective|Perspektive|Perspectiva|Prospettiva|Perspectiva|Перспектива|Perspektif|透视图|パース|원근
+Axonometric|Axonometrie|Axonométrica|Assonometria|Axonométrica|Аксонометрия|Aksonometrik|轴测图|軸測投影|축측 투영
 """
 
 # alias par langue : nom anglais | alias (séparés par des espaces). Les alias anglais restent utilisables quand ils ne sont

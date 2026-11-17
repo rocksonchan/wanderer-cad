@@ -9,11 +9,13 @@ from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector, geometry
 
-from .core import AXES3, IDLE_TOOL, TAU, pref
+from .core import (
+    AXES3, IDLE_TOOL, TAU, copy_held, copy_key_name, copy_mod_event, copy_shift, copy_update, lock_held, lock_key_name, pref,
+)
 from .snapping import _BBOX, _GEOM, _geom_ver, edit_selection
 from .drawing import _HOVER, _same_region, find_window_region, get_shader, over_nav_gizmo, px_scale, region_rv3d
 from .base import DessinBase
-from .subd import copy_moved_edit, copy_moved_objects, ghost_for_edit, ghost_for_objects, ghost_hide, ghost_show
+from .subd import drag_copy_commit, ghost_for_edit, ghost_for_objects, ghost_hide, ghost_show
 
 
 # --------------------------------------------------------------------------
@@ -639,6 +641,9 @@ def pick_object_at(context, area, region, mx, my):
                 continue
             if object_hit_box(o, dg, persp, region, rect, True):
                 return o, None
+        img = sheet_image_at(context, region, rv3d, mx, my)       # mise en page : une image posée sur la feuille (logo, photo)
+        if img is not None:
+            return img, None
     except (RuntimeError, ValueError, AttributeError):
         pass
     return None
@@ -1599,8 +1604,9 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
         self.start = (event.mouse_x - self.region.x, event.mouse_y - self.region.y)
         self.start_abs = (event.mouse_x, event.mouse_y)
         self.sub = bool(event.ctrl and event.shift and not event.alt)      # Ctrl+Maj + zone : sommets (Rhino)
-        if event.alt and not (event.shift or event.ctrl):
-            # Alt + poignée du Gumball : on lance nous-mêmes la transformation (avec copie)
+        shift_copy = copy_shift()
+        if copy_held(event) and not (event.ctrl or (event.shift if not shift_copy else event.alt)):
+            # Alt (ou Maj, selon les préférences) + poignée du Gumball : on lance nous-mêmes la transformation (avec copie)
             try:
                 with context.temp_override(area=self.area, region=self.region):
                     handle = gumball_handle_at(context, self.start[0], self.start[1], self.region,
@@ -1623,9 +1629,12 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
         self.dragged = False
         self.moving = False
         self.grab = None
-        self.copy_flag = bool(event.alt)      # Alt maintenu pendant le déplacement : on déplace une copie
+        self.copy_flag = copy_held(event)     # Alt (ou Maj) maintenu pendant le déplacement : on déplace une copie
         self.edit_mode = context.mode == 'EDIT_MESH'
-        if not (event.shift or event.ctrl):
+        # Maj + glisser un objet : copie quand Maj est la touche de copie (3ds Max) ; sinon Maj ajoute à la sélection.
+        # 3ds Max, mode édition : Ctrl + Maj + glisser des faces = copie détachée (Maj seul : extrusion)
+        self.ctrl_copy = bool(shift_copy and self.edit_mode and event.ctrl and event.shift and not event.alt)
+        if self.ctrl_copy or (not event.ctrl and (not event.shift or (shift_copy and not event.alt))):
             if context.mode == 'OBJECT':
                 self.grab = pick_object_at(context, self.area, self.region, self.start[0], self.start[1])
             elif self.edit_mode:
@@ -1638,7 +1647,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
                 self.grab = None
         except (TypeError, AttributeError, IndexError, ReferenceError):
             pass
-        if event.alt and self.grab is None:
+        if event.alt and (self.grab is None or shift_copy):
             return {'CANCELLED', 'PASS_THROUGH'}     # Alt hors d'un objet : on laisse Blender / la navigation
         self._h = bpy.types.SpaceView3D.draw_handler_add(draw_box_cb, (self,), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
@@ -1685,7 +1694,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
             return False
         self.p0 = p0
         self.moving = True
-        gumball_freeze(context, pivot, "DESSIN_OT_selection")      # le Gumball reste à sa place pendant le glisser (Rhino)
+        gumball_freeze(context, pivot, "DESSIN_OT_selection")      # repère de départ ; le Gumball suit ensuite l'objet (Rhino)
         return True
 
     def begin_move_edit(self, context):
@@ -1733,7 +1742,10 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
 
     def move_header(self, d):
         tag = "Copy" if getattr(self, "copy_flag", False) else "Move"
-        return (f"{tag}: {d.x:.3f}, {d.y:.3f}, {d.z:.3f}   |   Alt: copy   Shift: keep dominant axis   Esc: cancel")
+        if tag == "Copy" and getattr(self, "edit_mode", False) and copy_shift() and not getattr(self, "ctrl_copy", False):
+            tag = "Extrude"                             # (3ds Max : Maj + glisser des arêtes ou des faces)
+        return (f"{tag}: {d.x:.3f}, {d.y:.3f}, {d.z:.3f}   |   {copy_key_name()}: copy   {lock_key_name()}: keep dominant axis"
+                "   Esc: cancel")
 
     def move_to(self, context, cx, cy, shift):
         p = self.plane_point(context, cx, cy)
@@ -1743,6 +1755,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
         if shift:                       # Maj : on garde l'axe dominant
             a = max(range(3), key=lambda i: abs(d[i]))
             d = AXES3[a] * d[a]
+        gumball_drag_xform(Matrix.Translation(d))      # le Gumball suit l'objet glissé (comme Rhino)
         if self.edit_mode:
             self.edit_translate(d)
             self.move_delta = d
@@ -1764,6 +1777,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
             pass
 
     def cancel_move(self, context):
+        gumball_drag_xform(None)
         if self.edit_mode:
             self.edit_translate(Vector((0.0, 0.0, 0.0)))
             return
@@ -1790,10 +1804,11 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
         ghost_show(self.area, self._ghost)
 
     def modal(self, context, event):
-        if event.type in {'LEFT_ALT', 'RIGHT_ALT'}:
-            self.copy_flag = event.value == 'PRESS'
+        mod = copy_mod_event(event, self.copy_flag) if (self.moving or self.grab is not None) else None
+        if mod is not None:          # Alt / Maj pendant le glisser : copie, axe dominant
+            self.copy_flag = mod[0]
             if self.moving:
-                self.move_to(context, event.mouse_x - self.region.x, event.mouse_y - self.region.y, event.shift)
+                self.move_to(context, event.mouse_x - self.region.x, event.mouse_y - self.region.y, mod[1])
                 self.update_ghost(context)
             return {'RUNNING_MODAL'}
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
@@ -1803,7 +1818,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
             self.cleanup()
             return {'CANCELLED'}
         if event.type == 'MOUSEMOVE':
-            self.copy_flag = bool(event.alt)
+            self.copy_flag = copy_update(event, self.copy_flag)
             cx, cy = event.mouse_x - self.region.x, event.mouse_y - self.region.y
             if not self.dragged and math.hypot(cx - self.start[0], cy - self.start[1]) > 5.0 * px_scale():
                 self.dragged = True
@@ -1813,7 +1828,7 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
                         self.grab = None
             if self.dragged:
                 if self.moving:
-                    self.move_to(context, cx, cy, event.shift)
+                    self.move_to(context, cx, cy, lock_held(event))
                     self.update_ghost(context)
                     redraw_region(self)
                 else:
@@ -1823,11 +1838,9 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
             self.cleanup()
             if self.moving:
-                if self.copy_flag or event.alt:
-                    if self.edit_mode:
-                        copy_moved_edit(self.items)
-                    else:
-                        copy_moved_objects(context, self.mv_items)
+                if self.copy_flag or copy_held(event):
+                    drag_copy_commit(context, self.items if self.edit_mode else self.mv_items, self.edit_mode,
+                                     ctrl=getattr(self, "ctrl_copy", False) or event.ctrl)
                 self.end_ui()
                 return {'FINISHED'}
             if self.dragged:
@@ -1857,6 +1870,13 @@ class DESSIN_OT_selection_boite(bpy.types.Operator):
                                       deselect_all=not (event.shift or event.ctrl))
         except (RuntimeError, TypeError):
             pass
+        if context.mode == 'OBJECT':                 # clic sur un objet groupé : le groupe entier, jusqu'au dégroupage
+            try:
+                hit = pick_object_at(context, self.area, self.region, self.start[0], self.start[1])
+            except (RuntimeError, ReferenceError, ValueError, TypeError):
+                hit = None
+            if hit:
+                group_click(context, hit[0], 'REMOVE' if event.ctrl else ('ADD_TOGGLE' if event.shift else 'SET'))
         if _SF["solo"] is not None and context.mode == 'OBJECT':
             sel_filter_restore(context)
 
@@ -2166,9 +2186,12 @@ class DESSIN_OT_selection_cercle(bpy.types.Operator):
 def _late_imports():
     """Noms définis dans des modules chargés après celui-ci : ils ne servent qu'à l'exécution des outils."""
     global _CMD, _SF, back_to_idle, boundary_loops, cmd_click_idle, extrude_ball_hit, gumball_handle_at
-    global gumball_freeze, gumball_selection, gumball_unfreeze, sel_filter_restore, set_prompt
+    global gumball_drag_xform, gumball_freeze, gumball_selection, gumball_unfreeze, sel_filter_restore, set_prompt
+    global sheet_image_at, group_click
+    from .layout_sheet import sheet_image_at
     from .display import _SF, sel_filter_restore
-    from .gumball import gumball_freeze, gumball_selection, gumball_unfreeze
+    from .objects import group_click
+    from .gumball import gumball_drag_xform, gumball_freeze, gumball_selection, gumball_unfreeze
     from .offset_extrude import back_to_idle
     from .blocks import boundary_loops
     from .gumball_handles import extrude_ball_hit, gumball_handle_at

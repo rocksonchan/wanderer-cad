@@ -5,6 +5,7 @@ import json
 import time
 
 from .core import FR_ALIASES
+from .settings import TOOLBOX_GROUPS
 
 
 # --------------------------------------------------------------------------
@@ -48,12 +49,61 @@ def _layer_use_color_update(self, context):
         pass
 
 
+# Réglages d'impression d'un calque, comme dans AutoCAD (imprimé ou non, épaisseur de trait) et Rhino (couleur
+# d'impression). Ils servent à l'export PDF / SVG / DXF des mises en page.
+PRINT_WIDTHS = (0.05, 0.09, 0.13, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.53, 0.60, 0.70, 0.80, 0.90, 1.00,
+                1.06, 1.20, 1.40, 1.58, 2.00, 2.11)                       # (les épaisseurs proposées par AutoCAD, en mm)
+PRINT_WIDTH_ITEMS = (('DEFAULT', "Default", "The line widths of the layout (its Print panel): visible edges, hidden edges, annotations"),) \
+    + tuple(("W%03d" % int(round(w * 100)), "%.2f mm" % w, "") for w in PRINT_WIDTHS)
+OBJECT_WIDTH_ITEMS = (('DEFAULT', "By Layer", "The objects follow the print width of their layer again"),) + PRINT_WIDTH_ITEMS[1:]
+
+
+def print_width_value(key):
+    """Épaisseur en mm d'un choix de la liste ('W035' -> 0.35) ; 0 pour « Default »."""
+    try:
+        return int(key[1:]) / 100.0 if key != 'DEFAULT' else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def layer_print_width(pg):
+    return print_width_value(pg.print_width)
+
+
+def _layer_print_update(self, context):
+    try:
+        print_styles_changed()
+    except (NameError, RuntimeError, ReferenceError, AttributeError):
+        pass
+
+
+def _layer_print_color_update(self, context):
+    if not self.use_print_color:
+        self.use_print_color = True     # choisir une couleur d'impression l'active
+        return
+    _layer_print_update(self, context)
+
+
 class DESSIN_PG_layer(bpy.types.PropertyGroup):
     folded: bpy.props.BoolProperty(name="Folded", default=False, description="Hides the sublayers in the list")
     use_color: bpy.props.BoolProperty(name="Layer color", default=False, update=_layer_use_color_update,
                                       description="Objects of this layer take the layer color")
     color: bpy.props.FloatVectorProperty(name="Color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.8, 0.8, 0.8),
                                          update=_layer_color_update, description="Color of the layer")
+    plot: bpy.props.BoolProperty(name="Print", default=True, update=_layer_print_update,
+                                 description="The objects of this layer are printed (PDF, SVG, DXF of the layouts). Off: the layer "
+                                             "stays visible on screen, in light gray on the sheets, but is not printed, like "
+                                             "Plot / No Plot in AutoCAD. Its sublayers follow")
+    print_width: bpy.props.EnumProperty(name="Print width", items=PRINT_WIDTH_ITEMS, default='DEFAULT', update=_layer_print_update,
+                                        description="Printed line width of the objects of this layer. Default: the line widths of "
+                                                    "the layout. A sublayer left on Default follows its parent layer")
+    use_print_color: bpy.props.BoolProperty(name="Own print color", default=False, update=_layer_print_update,
+                                            description="The objects of this layer are printed in their own print color, whatever "
+                                                        "the color mode of the layout (click to go back to the color mode)")
+    print_color: bpy.props.FloatVectorProperty(name="Print color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.0, 0.0, 0.0),
+                                               update=_layer_print_color_update,
+                                               description="Color the objects of this layer are printed in (choosing one turns it on). "
+                                                           "Without it, the layout decides: black, layer colors or grayscale")
 
 
 def layer_rows(context):
@@ -315,6 +365,9 @@ def layer_copy_tree(src, parent, context):
     parent.children.link(new)
     new.dessin_layer.color = src.dessin_layer.color
     new.dessin_layer.use_color = src.dessin_layer.use_color
+    new.dessin_layer.print_color = src.dessin_layer.print_color
+    for key in ("plot", "print_width", "use_print_color"):
+        setattr(new.dessin_layer, key, getattr(src.dessin_layer, key))
     for o in src.objects:
         o2 = o.copy()
         if o.data is not None:
@@ -1086,6 +1139,27 @@ def tool_short_labels(fams):
     return out
 
 
+class DESSIN_OT_toolbox_fold(bpy.types.Operator):
+    bl_idname = "dessin.toolbox_fold"
+    bl_label = "Expand / Collapse All"
+    bl_description = "Expands or collapses all the tool groups of this panel"
+    bl_options = {'INTERNAL'}
+
+    open: bpy.props.BoolProperty(default=True)
+
+    @classmethod
+    def description(cls, context, props):
+        return "Expand all the tool groups" if props.open else "Collapse all the tool groups"
+
+    def execute(self, context):
+        st = context.scene.dessin
+        for i in range(TOOLBOX_GROUPS):
+            setattr(st, f"tb_open_{i}", self.open)
+        if context.area is not None:
+            context.area.tag_redraw()
+        return {'FINISHED'}
+
+
 class DESSIN_PT_toolbox(bpy.types.Panel):
     bl_label = "Tools"
     bl_idname = "DESSIN_PT_toolbox"
@@ -1096,7 +1170,11 @@ class DESSIN_PT_toolbox(bpy.types.Panel):
     def draw(self, context):
         lay = self.layout
         st = context.scene.dessin
-        lay.prop(st, "tool_search", text="", icon='VIEWZOOM', placeholder="Search tools")
+        row = lay.row(align=True)
+        row.prop(st, "tool_search", text="", icon='VIEWZOOM', placeholder="Search tools")
+        # un seul bouton : flèche vers le haut quand tous les groupes sont dépliés (tout plier), sinon vers le bas (tout déplier)
+        all_open = all(getattr(st, f"tb_open_{i}") for i in range(min(TOOLBOX_GROUPS, len(tool_families()))))
+        row.operator(DESSIN_OT_toolbox_fold.bl_idname, text="", icon='TRIA_UP' if all_open else 'TRIA_DOWN').open = not all_open
         q = st.tool_search.strip().lower()
         fams = tool_families()
         labels = tool_short_labels(fams)
@@ -1110,7 +1188,10 @@ class DESSIN_PT_toolbox(bpy.types.Panel):
                                               + FR_ALIASES.get(c.bl_idname.split(".", 1)[-1], "")).split())]
             if not items:
                 continue
-            header, body = lay.panel(f"wd_toolbox_{i}", default_closed=False)
+            if i < TOOLBOX_GROUPS:     # état gardé dans la scène : les boutons « tout déplier / tout plier » peuvent le changer
+                header, body = lay.panel_prop(st, f"tb_open_{i}")
+            else:
+                header, body = lay.panel(f"wd_tools_open_{i}", default_closed=False)
             header.label(text=title)
             if body is None:
                 continue
@@ -1366,8 +1447,133 @@ class DESSIN_PT_layers_states(bpy.types.Panel):
             lay.label(text="Save the visibility and locks of all layers, restore them in one click", icon='INFO')
 
 
+# --------------------------------------------------------------------------
+# Réglages d'impression : table des calques, épaisseur propre à un objet
+# --------------------------------------------------------------------------
+
+def draw_layer_print_table(layout, root, limit=250):
+    """Table des réglages d'impression des calques rangés sous la collection `root` : imprimé ou non, nom, couleur
+    d'impression, épaisseur. Retourne le nombre de calques listés."""
+    col = layout.column(align=True)
+    count = [0]
+
+    def walk(c, depth, live):
+        for ch in c.children:
+            if count[0] >= limit:
+                return
+            count[0] += 1
+            pg = ch.dessin_layer
+            on = bool(live and pg.plot)
+            row = col.row(align=True)
+            tg = row.row(align=True)
+            tg.active = on                     # (même icône dans les deux états ; grisée quand le calque n'est pas imprimé)
+            tg.prop(pg, "plot", text="", icon='OUTPUT', emboss=False)
+            nm = row.row(align=True)
+            nm.active = on
+            if depth:
+                nm.separator(factor=1.2 * depth)
+            nm.label(text=ch.name)
+            sw = row.row(align=True)
+            sw.ui_units_x = 1.0
+            sw.active = bool(pg.use_print_color)
+            sw.prop(pg, "print_color", text="")
+            if pg.use_print_color:
+                row.prop(pg, "use_print_color", text="", icon='PANEL_CLOSE', emboss=False)
+            else:
+                row.label(text="", icon='BLANK1')
+            wd = row.row(align=True)
+            wd.ui_units_x = 4.4
+            wd.prop(pg, "print_width", text="")
+            walk(ch, depth + 1, on)
+
+    walk(root, 0, True)
+    if not count[0]:
+        layout.label(text="No layer yet")
+    elif count[0] >= limit:
+        layout.label(text=f"Showing the first {limit} layers", icon='INFO')
+    return count[0]
+
+
+def selection_print_width(context):
+    """Texte du bouton d'épaisseur de la sélection : « By Layer », « 0.35 mm » ou « Mixed »."""
+    try:
+        vals = {round(float(o.get("wd_lw", 0.0) or 0.0), 3) for o in context.selected_objects}
+    except (AttributeError, ReferenceError, TypeError, ValueError):
+        return "By Layer"
+    if len(vals) > 1:
+        return "Mixed"
+    v = next(iter(vals), 0.0)
+    return "%.2f mm" % v if v > 0.0 else "By Layer"
+
+
+def draw_object_print_width(layout, context):
+    row = layout.row(align=True)
+    row.enabled = bool(getattr(context, "selected_objects", None))
+    row.label(text="Selected objects")
+    row.operator_menu_enum(DESSIN_OT_object_print_width.bl_idname, "width", text=selection_print_width(context))
+
+
+class DESSIN_OT_object_print_width(bpy.types.Operator):
+    bl_idname = "dessin.object_print_width"
+    bl_label = "Print Width of the Selection"
+    bl_description = ("Printed line width of the selected objects, whatever their layer, like the lineweight of an object "
+                      "in AutoCAD. By Layer: they follow the print width of their layer again")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    width: bpy.props.EnumProperty(name="Print width", items=OBJECT_WIDTH_ITEMS, default='DEFAULT')
+
+    @classmethod
+    def poll(cls, context):
+        return bool(context.selected_objects)
+
+    def execute(self, context):
+        w = print_width_value(self.width)
+        n = 0
+        for o in context.selected_objects:
+            try:
+                if o.get("wd_gen") or o.get("wd_layout_gen"):
+                    continue
+                if w > 0.0:
+                    o["wd_lw"] = w
+                elif "wd_lw" in o.keys():
+                    del o["wd_lw"]
+                o.update_tag()
+                n += 1
+            except (RuntimeError, ReferenceError, AttributeError, TypeError):
+                pass
+        try:
+            model_touch(context.scene)            # les fenêtres des mises en page reliront le modèle
+            print_styles_changed()
+        except (NameError, RuntimeError, ReferenceError, AttributeError):
+            pass
+        self.report({'INFO'}, f"Print width of {n} object(s): {'By Layer' if w <= 0.0 else '%.2f mm' % w}")
+        return {'FINISHED'}
+
+
+class DESSIN_PT_layers_print(bpy.types.Panel):
+    bl_label = "Print Settings"
+    bl_idname = "DESSIN_PT_layers_print"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Layers"
+    bl_parent_id = "DESSIN_PT_layers"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        lay = self.layout
+        lay.label(text="Printed, print color and line width of each layer:")
+        draw_layer_print_table(lay, context.scene.collection)
+        draw_object_print_width(lay, context)
+        lay.label(text="Used by the PDF, SVG and DXF of the layouts", icon='INFO')
+
+
+LAYER_PRINT_CLASSES = (DESSIN_OT_object_print_width, DESSIN_PT_layers_print)
+
+
 def _late_imports():
     """Noms définis dans des modules chargés après celui-ci : ils ne servent qu'à l'exécution des outils."""
+    global model_touch, print_styles_changed
+    from .layout import model_touch, print_styles_changed
     global CMD_ALIASES, DESSIN_TT_align, DESSIN_TT_annotation, DESSIN_TT_arc_3pts, DESSIN_TT_array_polar
     global DESSIN_TT_blend_srf, DESSIN_TT_boite, DESSIN_TT_bool_union, DESSIN_TT_camera, DESSIN_TT_camera_target
     global DESSIN_TT_cap, DESSIN_TT_center_mark, DESSIN_TT_chamfer, DESSIN_TT_chamfer_c, DESSIN_TT_clip_plane

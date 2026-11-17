@@ -1696,5 +1696,85 @@ class DESSIN_OT_orient(DessinTransform):
         return [], [[r1, r2], [t1, self.cur]], info, ("xform", M)
 
 
+
+def _frame3(p1, p2, p3):
+    """Repère (matrice 4×4) défini par trois points : origine p1, axe X vers p2, plan XY passant par p3. None si alignés."""
+    x = p2 - p1
+    if x.length < 1e-9:
+        return None
+    z = x.cross(p3 - p1)
+    if z.length < 1e-9 * max(1.0, x.length * (p3 - p1).length):
+        return None
+    x.normalize()
+    z.normalize()
+    y = z.cross(x)
+    M = Matrix((x, y, z)).transposed().to_4x4()
+    M.translation = p1
+    return M
+
+
+class DESSIN_OT_orient3pt(DessinTransform):
+    bl_idname = "dessin.orient3pt"
+    bl_label = "Orient 3 Points"
+    bl_description = ("Like Orient3Pt: moves and rotates the selected objects from one plane to another. Three reference points "
+                      "(origin, X direction, side of the plane), then three target points. The size does not change. C: copy")
+
+    TITLE = "Orient 3 Points"
+    NEEDED = 6
+    NUMFIELDS = 0
+    PLANAR = False
+    HAS_CENTER = True
+    NO_SELECTION = "Select the objects to orient first"
+    STEPS = ("reference point 1 (origin)", "reference point 2 (X direction)", "reference point 3 (side of the plane)",
+             "target point 1 (origin)", "target point 2 (X direction)", "target point 3 (side of the plane)")
+
+    def prompt(self):
+        opt = f"   [C: copy = {'yes' if self.center else 'no'}]"
+        return self.STEPS[min(len(self.points), 5)] + opt
+
+    def lock_allowed(self):
+        # X / Y / Z verrouille la direction X de chaque trio (point 2 depuis le point 1) et le côté du plan (point 3)
+        return self.LOCK_OK and len(self.points) in (1, 2, 4, 5)
+
+    def click(self, context):
+        n = len(self.points)
+        if self.cur is not None:
+            if n in (1, 4) and (self.cur - self.points[n - 1]).length < 1e-9:
+                self.report({'WARNING'}, "The first two points of a set must be different")
+                return
+            if n in (2, 5) and _frame3(self.points[n - 2], self.points[n - 1], self.cur) is None:
+                self.report({'WARNING'}, "The three points are aligned: pick a point off the line to set the plane")
+                return
+        super().click(context)
+
+    def compute(self):
+        if not self.points or self.cur is None:
+            return [], [], "", None
+        P = self.points
+        n = len(P)
+        if n == 1:
+            return [], [[P[0], self.cur]], "", None
+        if n == 2:
+            return [], [[P[0], P[1]], [P[0], self.cur]], "", None
+        ref = [[P[0], P[1]], [P[0], P[2]]]
+        Fr = _frame3(P[0], P[1], P[2])
+        if Fr is None:
+            return [], ref, "", None
+        if n == 3:                                       # cible 1 : l'objet suit le curseur
+            return [], ref, "", ("xform", Matrix.Translation(self.cur - P[0]))
+        if n == 4:                                       # cible 2 : la direction X tourne déjà
+            a, b = P[1] - P[0], self.cur - P[3]
+            if a.length < 1e-9 or b.length < 1e-9:
+                return [], ref, "", ("xform", Matrix.Translation(P[3] - P[0]))
+            rot = a.normalized().rotation_difference(b.normalized()).to_matrix().to_4x4()
+            M = Matrix.Translation(P[3]) @ rot @ Matrix.Translation(-P[0])
+            return [], ref + [[P[3], self.cur]], f"Angle {math.degrees(a.angle(b)):.2f}°", ("xform", M)
+        Ft = _frame3(P[3], P[4], self.cur)               # cible 3 : le plan complet
+        if Ft is None:
+            return [], ref + [[P[3], P[4]]], "", None
+        M = Ft @ Fr.inverted()
+        tilt = math.degrees(Fr.col[2].xyz.angle(Ft.col[2].xyz))
+        return [], ref + [[P[3], P[4]], [P[3], self.cur]], f"Plane tilt {tilt:.2f}°", ("xform", M)
+
 def _late_imports():
     pass

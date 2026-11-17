@@ -13,7 +13,7 @@ from .core import (
     lang, mouse_over_statusbar, oneshot_clear, oneshot_hold, oneshot_hold_set, oneshot_keys, oneshot_reset, oneshot_shown,
     oneshot_toggle, osnap_shown, pref, redraw_bars, tr_label, tr_text, unit_info,
 )
-from .drawing import find_window_region, get_shader
+from .drawing import bars_frame, find_window_region, get_shader
 from .base import DessinBase
 from .selection import DESSIN_OT_esc_select
 from .objects import _act_invoke
@@ -22,9 +22,13 @@ from .gumball_handles import OSNAP_BAR
 from .toolbar import DESSIN_TT_selection_boite, _SELECT_TOOL_IDS
 from .navigation import BASE_VIEWS, DESSIN_OT_mouse_track, MOUSE_KEYMAPS, _update_view_keymap
 from .languages import LANG_ALIASES, LANG_LABELS
-from .core import language_caches_clear
+from .core import language_caches_clear, pref_applied_language
 from .views import CMD_ALIASES, CMD_KEY_ITEMS, DESSIN_MT_named_views, _CMD, current_view_name, tab_names, view_label
 from .layout import bar_tabs, is_layout, layout_zoom_page, tab_click
+from .quadview import (
+    _QUAD, _win_region, quad_area_at, quad_bars, quad_click, quad_column_watch, quad_focus, quad_focus_set, quad_grid_of,
+    quad_is_column, quad_peers, quad_title,
+)
 from .cplane import (
     _act_cplane_mode, _act_cplane_named, _act_cplane_redo, _act_cplane_undo, _act_op, _act_origin, _act_region,
     _act_select_linked, _act_select_similar, _act_select_similar_menu, _act_shading, _act_toggle, cmd_clean_label,
@@ -116,6 +120,9 @@ CMD_ACTIONS = (
     ("Hide", "hi hide", "", "Hide the selected objects", _act_op("object.hide_view_set", unselected=False)),
     ("Isolate", "isolate", "", "Hide everything except the selected objects", _act_op("object.hide_view_set", unselected=True)),
     ("Show All", "show showall unhide", "", "Show the hidden objects", _act_op("object.hide_view_clear")),
+    ("Lock", "lock freeze", "", "Lock the selected objects: visible and snappable, but no longer selectable (Freeze in 3ds Max)", _act_op("dessin.lock")),
+    ("Unlock All", "unlock unlockall unfreeze unfreezeall", "", "Unlock every locked object (Unfreeze All in 3ds Max)", _act_op("dessin.unlock_all")),
+    ("Unlock Selected", "unlockselected", "", "Click the locked objects to unlock, then Enter", _act_invoke("dessin.unlock_selected")),
     ("Zoom Extents", "z ze zoom extents zoomall", "", "Frame all the objects (on a layout: the whole sheet)", _act_zoom_extents),
     ("Zoom Selected", "zs zoomselected", "", "Frame the selected objects", _act_op("view3d.view_selected")),
     ("Perspective / Ortho", "ortho persp projection", "", "Toggle perspective / orthographic projection", _act_op("view3d.view_persportho")),
@@ -175,6 +182,8 @@ CMD_ACTIONS = (
     ("Explode Hatch", "explodehatch", "", "Turn the selected hatches into curves (a solid hatch becomes a planar surface)", _act_op("dessin.hatch_explode")),
     ("Hatch Boundary", "hatchboundary", "", "Create curves on the boundary and the holes of the selected hatches", _act_op("dessin.hatch_boundary")),
     ("Match Hatch", "matchhatch", "", "Give the selected hatches the pattern, scale and rotation of the active one (clicked last)", _act_op("dessin.hatch_match")),
+    ("4 Views", "4views fourviews quadview 4view", "", "Split the 3D view into four views like Rhino (Top, Perspective, Front, Right), each with its own display; again: back to one view", _act_op("dessin.quad_view")),
+    ("Maximize View", "maximizeview maxview singleview", "", "4 views: keep only the view under the mouse (same as a double-click on its title)", _act_op("dessin.quad_view", mode='SINGLE', here=True)),
     ("Layout", "layout lo newlayout", "", "New layout: a paper sheet (A4 to A0...) with viewports of the model at scale, a title block and PDF / SVG / DXF export", _act_invoke("dessin.layout_new")),
     ("Model", "model tilemode modeltab", "", "Leave the layout and go back to the model (the Model tab of AutoCAD)", _act_op("dessin.layout_close")),
     ("Next Layout", "nextlayout", "", "Open the next layout (paper space)", _act_op("dessin.layout_next")),
@@ -184,12 +193,13 @@ CMD_ACTIONS = (
     ("Fit Viewport", "viewportfit fitviewport detailfit fitdetail", "", "Layout: frame the whole model in the selected viewports at the largest standard scale that fits", _act_op("dessin.detail_fit")),
     ("Pan Viewport", "mspace ms viewportpan panviewport detailpan pandetail dpan", "", "Layout: work inside a viewport like model space in AutoCAD (same as a double-click inside it): drag to pan the model, wheel to change the scale", _act_invoke("dessin.detail_pan")),
     ("Page Setup", "pagesetup", "", "Layout: paper size, orientation, margin and title block of the current layout", _act_invoke("dessin.layout_page_setup")),
+    ("Edit Title Block", "titleblock edittitle tblock", "", "Layout: edit the title block on the sheet like a table: drag its edge and its lines, C adds a column, R a row (same as a double-click on it)", _act_invoke("dessin.title_edit")),
+    ("Convert to Free Drawing", "explodetitle freetitle", "", "Layout: turn the title block into ordinary lines, texts and logo on the layer 'Title block', to redraw it freely as in AutoCAD", _act_op("dessin.title_explode")),
     ("Export PDF", "exportpdf pdf print plot", "", "Layout: vector PDF at the exact paper size, one page per layout (print at 100 % for a drawing at scale)", _act_invoke("dessin.layout_export_pdf")),
     ("Export SVG", "exportsvg svg", "", "Layout: vector SVG in millimeters (Illustrator, Inkscape...)", _act_invoke("dessin.layout_export_svg")),
     ("Export DXF", "exportdxf dxfout", "", "Layout: DXF in paper millimeters for AutoCAD, Rhino, CADCraft...", _act_invoke("dessin.layout_export_dxf")),
-    ("Export DWG", "exportdwg dwgout", "", "Layout: the sheets as a DWG drawing in paper millimeters (needs the free ODA File Converter)", _act_invoke("dessin.layout_export_dwg")),
-    ("Export Model (DXF / DWG)", "exportmodel exportcad saveasdwg saveasdxf wblock", "", "Exports the model as a DXF or DWG drawing: curves, arcs and circles, 3D faces of the solids, text, layers and colors", _act_invoke("dessin.export_cad")),
-    ("Import DXF / DWG", "importdwg importdxf importcad dxfin dwgin", "", "Imports a DXF or DWG drawing with its layers, colors, blocks and text (DWG needs the free ODA File Converter)", _act_invoke("dessin.import_cad")),
+    ("Export Model (DXF)", "exportmodel exportcad saveasdxf wblock", "", "Exports the model as a DXF drawing: curves, arcs and circles, 3D faces of the solids, text, layers and colors", _act_invoke("dessin.export_cad")),
+    ("Import DXF", "importdxf importcad dxfin", "", "Imports a DXF drawing with its layers, colors, blocks and text", _act_invoke("dessin.import_cad")),
 )
 
 
@@ -210,7 +220,7 @@ CMD_ADD = (("Grid", "mesh", "primitive_grid_add"), ("Monkey", "mesh", "primitive
 # elles se confondaient avec les outils Box, Plane, Circle, Sphere, Cylinder, Cone et Torus de Wanderer.
 CMD_NATIVE_HIDE = {"mesh." + n for n in ("primitive_cube_add", "primitive_plane_add", "primitive_circle_add", "primitive_uv_sphere_add",
                                          "primitive_ico_sphere_add", "primitive_cylinder_add", "primitive_cone_add", "primitive_torus_add")} | {"curves.add_circle"}
-CMD_OBJECT_OPS = (("Apply Transforms", "object", "transform_apply", {}, "apply freeze"), ("Origin to Geometry", "object", "origin_set", {"type": 'ORIGIN_GEOMETRY'}, "o2g"),
+CMD_OBJECT_OPS = (("Apply Transforms", "object", "transform_apply", {}, "apply freezetransforms"), ("Origin to Geometry", "object", "origin_set", {"type": 'ORIGIN_GEOMETRY'}, "o2g"),
                   ("Origin to 3D Cursor", "object", "origin_set", {"type": 'ORIGIN_CURSOR'}, "o2c"),
                   ("Shade Smooth", "object", "shade_smooth", {}, "sm smooth"), ("Shade Flat", "object", "shade_flat", {}, "sf flat"),
                   ("Convert to Mesh", "object", "convert", {"target": 'MESH'}, "tomesh"), ("Convert to Curve", "object", "convert", {"target": 'CURVE'}, "tocurve"),
@@ -670,6 +680,7 @@ class DESSIN_OT_command_line(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.ptr = context.area.as_pointer()
+        quad_focus_set(context.area)               # 4 vues : la vue où l'on tape une commande devient la vue active
         _SUGG_MEMO.clear()
         cmd_native_build()
         _CMD["input"] = {"area": self.ptr, "text": self.char, "sel": 0, "hist": -1, "tab": None}
@@ -696,6 +707,7 @@ class DESSIN_OT_command_line(bpy.types.Operator):
             reg = find_window_region(context.area, event.mouse_x, event.mouse_y)
             if reg is not None:
                 _CMD["mouse"][self.ptr] = (event.mouse_x - reg.x, event.mouse_y - reg.y)
+                _CMD.setdefault("mouse_org", {})[self.ptr] = (reg.x, reg.y)
                 _CMD.setdefault("mouse_t", {})[self.ptr] = time.monotonic()
                 context.area.tag_redraw()
             return {'PASS_THROUGH'}
@@ -787,6 +799,84 @@ def cmd_fit_lines(parts, maxw, max_lines=3):
     return lines[:max_lines]
 
 
+CMD_TEXT_LINES = 4          # lignes de texte au plus dans la ligne de commande (au-delà : « … »)
+_WRAP_MEMO = {}
+
+
+def cmd_wrap_row(items, inner, gap, key=None, max_lines=CMD_TEXT_LINES):
+    """Répartit les éléments de texte [(texte, couleur, gras)] de la ligne de commande sur des lignes d'au plus `inner`
+    pixels, au lieu de les couper : un élément qui ne tient pas sur ce qu'il reste de la ligne passe entier à la
+    suivante ; plus long qu'une ligne, il se poursuit sur les suivantes, coupé entre deux mots. Rien n'est tronqué tant
+    qu'il reste des lignes (au-delà de max_lines : « … »). Retourne [[(texte, couleur, gras, largeur)]].
+    key : ce dont dépendent les largeurs (taille du texte), pour ne pas tout remesurer à chaque dessin."""
+    memo_key = (tuple(items), round(inner, 1), round(gap, 2), key, max_lines) if key is not None else None
+    if memo_key is not None and memo_key in _WRAP_MEMO:
+        return _WRAP_MEMO[memo_key]
+
+    def width(t, bold):
+        _cmd_bold(bold)
+        w = blf.dimensions(0, t)[0]
+        _cmd_bold(False)
+        return w
+
+    def cut(t, bold, w):
+        while t and width(t + "…", bold) > w:
+            t = t[:-1]
+        return t + "…"
+
+    lines, cur, used = [], [], 0.0
+
+    def close():
+        nonlocal cur, used
+        lines.append(cur)
+        cur, used = [], 0.0
+
+    for text, col, bold in items:
+        rest = text.strip()
+        while rest:
+            room = inner - used - (gap if cur else 0.0)
+            w = width(rest, bold)
+            if w <= room:
+                cur.append((rest, col, bold, w))
+                used += (gap if len(cur) > 1 else 0.0) + w
+                break
+            if cur and (w <= inner or room < 0.4 * inner):
+                close()                         # il tient entier sur une ligne à lui (on ne le coupe pas), ou il ne reste
+                continue                        # qu'un bout de ligne : il commence à la suivante
+            words = rest.split(" ")
+            n = 0
+            while n < len(words) and width(" ".join(words[:n + 1]), bold) <= room:
+                n += 1
+            if n == 0:
+                if cur:
+                    close()                     # même son premier mot ne tient plus ici : ligne suivante
+                    continue
+                piece, n = cut(words[0], bold, inner), 1        # un mot plus large que la barre entière
+            else:
+                piece = " ".join(words[:n]).rstrip(" ·")       # (pas de séparateur « · » laissé en fin de ligne)
+            cur.append((piece, col, bold, width(piece, bold)))
+            rest = " ".join(words[n:]).lstrip(" ·")
+            if rest:
+                close()
+            else:
+                used += (gap if len(cur) > 1 else 0.0) + cur[-1][3]
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:                   # trop de lignes : la dernière gardée finit par « … »
+        lines = lines[:max_lines]
+        last = lines[-1]
+        t, col, bold, _w = last[-1]
+        before = sum(i[3] for i in last[:-1]) + gap * (len(last) - 1)
+        t = cut(t, bold, max(inner - before, 0.0))
+        last[-1] = (t, col, bold, width(t, bold))
+    lines = lines or [[]]
+    if memo_key is not None:
+        if len(_WRAP_MEMO) > 300:
+            _WRAP_MEMO.clear()
+        _WRAP_MEMO[memo_key] = lines
+    return lines
+
+
 CMD_CHIP_KEYS = {"Esc": ('ESC', ""), "Enter": ('RET', ""), "Enter/Space": ('RET', ""), "Tab": ('TAB', ""), "Space": ('SPACE', " "), "Backspace": ('BACK_SPACE', "")}
 
 
@@ -816,10 +906,23 @@ def cmd_hit(area, mx_abs, my_abs):
     """Élément cliquable de la barre sous la souris : (kind, valeur) ou None."""
     try:
         region = find_window_region(area, mx_abs, my_abs)
+        if region is None:                     # 4 vues : la souris est peut-être dans une autre des quatre
+            area = quad_area_at(area, mx_abs, my_abs)
+            region = find_window_region(area, mx_abs, my_abs) if area is not None else None
         if region is None:
             return None
+        ptr = area.as_pointer()
         x, y = mx_abs - region.x, my_abs - region.y
-        for x0, y0, x1, y1, kind, val in tuple(_CMD["hit"].get(area.as_pointer(), ())) + tuple(_VBAR["hit"].get(area.as_pointer(), ())):
+        for x0, y0, x1, y1, kind, val in _QUAD["hit"].get(ptr, ()):         # titre de la vue (4 vues) : dans sa région
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return kind, val
+        q = quad_bars(area)
+        if q is not None:                      # 4 vues : les barres de la vue active, posées sur l'ensemble des quatre
+            ptr, fr = q[0].as_pointer(), q[1]
+        else:
+            fr = bars_frame(area, region)      # (4 vues de Blender, Toggle Quad View : l'ensemble de ses quatre régions)
+        x, y = mx_abs - fr[0], my_abs - fr[1]
+        for x0, y0, x1, y1, kind, val in tuple(_CMD["hit"].get(ptr, ())) + tuple(_VBAR["hit"].get(ptr, ())):
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return kind, val
     except (AttributeError, ReferenceError, RuntimeError):
@@ -843,29 +946,58 @@ def new_view_dialog_later(context):
     bpy.app.timers.register(run, first_interval=0.25)
 
 
+def bars_in_owner(context, owner, fn):
+    """Fait fn(contexte) dans la vue `owner`, comme si la souris y était."""
+    with context.temp_override(area=owner, region=_win_region(owner)):
+        return fn(bpy.context)
+
+
+def bars_owner_do(context, fn):
+    """Fait fn(contexte) dans la vue que les barres montrent. Avec les 4 vues affichées, c'est la vue active : un clic
+    sur un onglet change sa vue à elle, pas celle de la vue du bas où la barre est dessinée."""
+    q = quad_bars(context.area)
+    if q is not None and q[0].as_pointer() != context.area.as_pointer():
+        try:
+            return bars_in_owner(context, q[0], fn)
+        except (TypeError, RuntimeError, AttributeError, ReferenceError):
+            pass
+    return fn(context)
+
+
+def bar_view_click(context, name):
+    """Clic sur un onglet de vue."""
+    bars_owner_do(context, lambda c: bpy.ops.dessin.view_restore('INVOKE_DEFAULT', name=name))
+
+
+def _cmd_click_do(context, kind, val):
+    if kind == 'open':
+        bpy.ops.dessin.command_line('INVOKE_DEFAULT')
+    elif kind == 'key' and val == "Esc":
+        bpy.ops.dessin.tool_exit()
+    elif kind == 'key' and val in ("F", "C") and DessinBase.active_tool_id(context) == "dessin.trim_tool":
+        bpy.ops.dessin.trim_mode(mode='FENCE' if val == "F" else 'CROSSING')
+    elif tab_click(context, kind, val):
+        pass                               # onglet d'une mise en page, ou retour au modèle depuis une mise en page
+    elif kind == 'view':
+        bpy.ops.dessin.view_restore('INVOKE_DEFAULT', name=val)
+    elif kind == 'viewmenu':
+        new_view_dialog_later(context)
+    elif kind == 'osnap':
+        vbar_toggle(context, val)
+    elif kind == 'mode':
+        mode_click(context, val)
+
+
 def cmd_click_idle(context, event):
     """Clic sur une puce alors qu'aucune commande n'est en cours (outil armé ou Select) : True si le clic est consommé."""
     hit = cmd_hit(context.area, event.mouse_x, event.mouse_y)
     if hit is None:
+        quad_focus_set(context.area)               # 4 vues : la vue où l'on clique devient la vue active
         return False
     kind, val = hit
     try:
-        if kind == 'open':
-            bpy.ops.dessin.command_line('INVOKE_DEFAULT')
-        elif kind == 'key' and val == "Esc":
-            bpy.ops.dessin.tool_exit()
-        elif kind == 'key' and val in ("F", "C") and DessinBase.active_tool_id(context) == "dessin.trim_tool":
-            bpy.ops.dessin.trim_mode(mode='FENCE' if val == "F" else 'CROSSING')
-        elif tab_click(context, kind, val):
-            pass                               # onglet d'une mise en page, ou retour au modèle depuis une mise en page
-        elif kind == 'view':
-            bpy.ops.dessin.view_restore('INVOKE_DEFAULT', name=val)
-        elif kind == 'viewmenu':
-            new_view_dialog_later(context)
-        elif kind == 'osnap':
-            vbar_toggle(context, val)
-        elif kind == 'mode':
-            mode_click(context, val)
+        if not quad_click(context, kind):          # (bouton des 4 vues, titre d'une vue : menu d'affichage, double-clic)
+            bars_owner_do(context, lambda c: _cmd_click_do(c, kind, val))
     except RuntimeError:
         pass
     return True
@@ -909,6 +1041,141 @@ def _cmd_bold(on):
         pass
 
 
+# ---- Bulle de saisie d'une valeur (Gumball : clic sur une poignée, puis on tape le nombre), dans le style des barres ----
+_VBUBBLE = {"handle": None, "area": None, "data": None, "t0": 0.0, "areaobj": None}
+VBUBBLE_SCALE = 0.85     # taille de la bulle par rapport aux barres du bas
+VBUBBLE_POP = 0.14       # durée de la petite animation d'apparition (s), comme la bulle de Rhino
+
+
+def value_bubble_show(area, anchor, parts, text):
+    """Affiche (ou met à jour) la bulle près du point `anchor` (pixels de la région) : `parts` = [(texte, couleur ou None,
+    gras)] pour la question (« Distance to move in » + « Y » en couleur), `text` = ce qui est tapé."""
+    if _VBUBBLE["data"] is None:          # elle apparaît : petite animation (elle grandit depuis la poignée)
+        _VBUBBLE["t0"] = time.monotonic()
+        _VBUBBLE["areaobj"] = area
+        try:
+            bpy.app.timers.register(_vbubble_tick, first_interval=0.016)
+        except (ValueError, RuntimeError):
+            pass
+    _VBUBBLE["data"] = (tuple(anchor), list(parts), text)
+    if _VBUBBLE["handle"] is None:
+        _VBUBBLE["handle"] = bpy.types.SpaceView3D.draw_handler_add(value_bubble_draw, (), 'WINDOW', 'POST_PIXEL')
+    _VBUBBLE["area"] = area.as_pointer() if area is not None else None
+    if area is not None:
+        area.tag_redraw()
+
+
+def _vbubble_tick():
+    """Redessine la vue pendant l'animation d'apparition, puis s'arrête."""
+    a = _VBUBBLE.get("areaobj")
+    try:
+        if a is not None:
+            a.tag_redraw()
+    except ReferenceError:
+        return None
+    if _VBUBBLE["data"] is None or time.monotonic() - _VBUBBLE["t0"] > VBUBBLE_POP + 0.05:
+        return None
+    return 0.016
+
+
+def vbubble_pop(now=None):
+    """Avancement de l'animation d'apparition : 0 au début, 1 à la fin (courbe qui ralentit à l'arrivée)."""
+    t = ((time.monotonic() if now is None else now) - _VBUBBLE["t0"]) / VBUBBLE_POP
+    t = min(max(t, 0.0), 1.0)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def value_bubble_hide(area=None):
+    if _VBUBBLE["handle"] is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_VBUBBLE["handle"], 'WINDOW')
+        except (ValueError, RuntimeError):
+            pass
+    _VBUBBLE.update(handle=None, area=None, data=None, areaobj=None)
+    if area is not None:
+        try:
+            area.tag_redraw()
+        except ReferenceError:
+            pass
+
+
+def value_bubble_draw():
+    context = bpy.context
+    d = _VBUBBLE["data"]
+    if d is None or context.area is None or context.area.as_pointer() != _VBUBBLE["area"]:
+        return
+    region = context.region
+    (ax, ay), parts, text = d
+    try:
+        sysp = context.preferences.system
+        base = max(1.0, (sysp.ui_scale or 1.0) * ((sysp.dpi or 72) / 72.0))
+    except (AttributeError, ReferenceError):
+        base = 1.0
+    sc = (1.0 + (base - 1.0) * 0.5) * CMD_SIZE_BASE * (pref("cmd_size") or 100) / 100.0
+    k = vbubble_pop()
+    sc *= VBUBBLE_SCALE * (0.7 + 0.3 * k)      # apparition : la bulle grandit simplement depuis la poignée (sans fondu)
+    th = _cmd_theme()
+    size = 12 * sc
+    W = lambda t: blf.dimensions(0, t)[0]
+    padx, pady, gap = 13 * sc, 11 * sc, 8 * sc
+    field_h = size * 2.0
+    _cmd_font(size)
+    widths = []
+    for t, _c, bold in parts:
+        _cmd_bold(bold)
+        widths.append(W(t))
+    _cmd_bold(False)
+    title_w = sum(widths)
+    _cmd_font(size * 1.1)
+    text_w = W(text or "0")
+    w = max(title_w, text_w + 40 * sc, 150 * sc) + 2 * padx
+    h = pady + size + gap + field_h + pady
+    tail = 9 * sc
+    right = ax + tail + 6 * sc + w <= region.width - 8 * sc       # à droite de la poignée, sinon à gauche
+    x0 = ax + tail + 4 * sc if right else ax - tail - 4 * sc - w
+    y0 = min(max(ay - h / 2.0, 8 * sc), region.height - h - 8 * sc)
+    x1, y1 = x0 + w, y0 + h
+    ty = min(max(ay, y0 + 14 * sc), y1 - 14 * sc)               # pointe vers la poignée
+    shader = get_shader('2D')
+
+    def fill(col, tris):
+        _blend_on()
+        shader.bind()
+        shader.uniform_float("color", col)
+        batch_for_shader(shader, 'TRIS', {"pos": tris}).draw(shader)
+
+    rad = 11 * sc
+    bx = x0 if right else x1
+    tip = (bx - tail, ty) if right else (bx + tail, ty)
+    fill(th["line"], _cmd_rrect(x0 - 1, y0 - 1, x1 + 1, y1 + 1, rad + 1))
+    fill(th["line"], [(bx, ty - tail - 1), (bx, ty + tail + 1), (tip[0] - (1 if right else -1), ty)])
+    fill(th["bg"], _cmd_rrect(x0, y0, x1, y1, rad))
+    fill(th["bg"], [(bx + (1 if right else -1), ty - tail), (bx + (1 if right else -1), ty + tail), tip])
+    # question, centrée ; l'axe dans sa couleur
+    _cmd_font(size)
+    x = x0 + (w - title_w) / 2.0
+    yt = y1 - pady - size * 0.85
+    for (t, col, bold), tw in zip(parts, widths):
+        _cmd_bold(bold)
+        blf.color(0, *(col if col is not None else th["fg"]))
+        blf.position(0, x, yt, 0)
+        blf.draw(0, t)
+        x += tw
+    _cmd_bold(False)
+    # champ : fond sombre, contour de la couleur de sélection, valeur tapée et curseur
+    fx0, fy0, fx1, fy1 = x0 + padx, y0 + pady, x1 - padx, y0 + pady + field_h
+    fill(th["sel"], _cmd_rrect(fx0 - 1, fy0 - 1, fx1 + 1, fy1 + 1, 8 * sc + 1))
+    fill((0.07, 0.07, 0.08, 1.0), _cmd_rrect(fx0, fy0, fx1, fy1, 8 * sc))
+    _cmd_font(size * 1.1)
+    blf.color(0, *th["fg"])
+    tx = fx0 + 9 * sc
+    tyy = fy0 + (field_h - size * 1.1) / 2.0 + size * 0.15
+    blf.position(0, tx, tyy, 0)
+    blf.draw(0, text)
+    cx = tx + (W(text) if text else 0.0) + 2 * sc
+    fill(th["fg"], _cmd_quad(cx, fy0 + field_h * 0.22, cx + max(1.0, 1.2 * sc), fy1 - field_h * 0.22))
+
+
 def _cmd_rrect(x0, y0, x1, y1, r, n=7):
     """Triangles d'un rectangle aux coins arrondis (éventail autour du centre)."""
     r = max(0.0, min(r, (x1 - x0) / 2.0, (y1 - y0) / 2.0))
@@ -944,7 +1211,7 @@ def cmd_parse_prompt(txt):
     def take(m):
         inner = m.group(1).strip()
         if len(inner) > 24:
-            details.append(inner)                  # long : détail sous forme de texte discret
+            details.append(re.sub(r"\s*\|\s*", "  ·  ", inner))      # long : détail sous forme de texte discret
         else:
             chips.append(inner)
         return " "
@@ -956,6 +1223,7 @@ def cmd_parse_prompt(txt):
     rest = re.sub(r"\(([^)]*)\)", take, rest)
     rest = CMD_FRAG.sub(take2, rest)
     rest = re.sub(r"\s+", " ", rest).strip(" ·,")
+    rest = re.sub(r"\s+([,;])", r"\1", rest)          # (une parenthèse retirée laisse « edges , then » : « edges, then »)
     extras = []
     for sgm in segs[1:]:
         m = re.match(r"S: snap (\w+)(?: \[(.*)\])?", sgm)
@@ -1048,20 +1316,159 @@ def group_center(width, left, right, groupw, sc):
     return min(max(c, lo), hi)
 
 
-def cmd_bar_cb():
+def bars_hidden(context, ptr, busy, views=False):
+    """Barres du bas masquées avec le bouton de l'en-tête de la vue 3D (à côté de Selectability & Visibility). La barre de
+    commande revient le temps de taper ou de suivre une commande ; les onglets de vue restent masqués. Une barre masquée
+    n'est plus cliquable."""
+    try:
+        shown = context.scene.dessin.show_bars
+    except AttributeError:
+        shown = True
+    if shown or (busy and not views):
+        return False
+    (_VBAR if views else _CMD)["hit"].pop(ptr, None)
+    return True
+
+
+class BarsFrame:
+    """Cadre des barres quand il n'est pas une région : l'ensemble des 4 vues. clear : aucun panneau ne recouvre le bas
+    du cadre (4 vues séparées : la barre d'outils n'est que dans la vue du haut) ; ptrs : les vues qui se le partagent."""
+    __slots__ = ("x", "y", "width", "height", "clear", "ptrs")
+
+    def __init__(self, x, y, width, height, clear=False, ptrs=()):
+        self.x, self.y, self.width, self.height, self.clear, self.ptrs = x, y, width, height, clear, ptrs
+
+
+class BarsContext:
+    """Contexte du dessin des barres quand elles montrent une autre vue que celle qui se dessine (4 vues : la vue active)."""
+
+    def __init__(self, context, area):
+        self._c = context
+        self.area = area
+        self.space_data = area.spaces.active
+        self.region = _win_region(area)
+        self.region_data = getattr(self.space_data, "region_3d", None)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+
+def bars_signature(owner, frame):
+    """Ce que montrent les barres : quand il change, les autres vues qui se partagent le cadre sont redessinées."""
+    ptr = owner.as_pointer()
+    st = _CMD["input"]
+    typed = (st.get("text"), st.get("sel"), st.get("tab")) if st is not None and st.get("area") == ptr else None
+    pos = bar_mouse(ptr, frame)
+    return (ptr, tuple(_CMD["hit"].get(ptr, ())), tuple(_VBAR["hit"].get(ptr, ())), _CMD["prompt"].get(bars_cmd_ptr(ptr)), typed,
+            None if pos is None else (round(pos[0]), round(pos[1])), len(_CMD["log"]))
+
+
+def bars_cmd_ptr(ptr):
+    """Vue dont la ligne de commande montre l'invite : celle-ci. Avec les 4 vues, quand elle n'a rien en cours : celle
+    des quatre où une commande est en cours (une commande de dessin suit la souris d'une vue à l'autre)."""
+    if _CMD["op"].get(ptr) is not None or _CMD["prompt"].get(ptr):
+        return ptr
+    peers = quad_peers(ptr)
+    if len(peers) > 1:
+        for p in peers:
+            if _CMD["op"].get(p) is not None:
+                return p
+        for p in peers:
+            if _CMD["prompt"].get(p):
+                return p
+    return ptr
+
+
+def bars_sync(area, owner, frame):
+    """4 vues : la vue qui vient de dessiner les barres fait redessiner celles qui montrent encore l'ancien état (au plus
+    dix fois par seconde chacune : jamais de boucle de dessin)."""
+    try:
+        sig = bars_signature(owner, frame)
+        drawn, last = _QUAD["drawn"], _QUAD["sync"]
+        me = area.as_pointer()
+        drawn[me] = sig
+        now = time.monotonic()
+        for a in owner.id_data.areas:
+            p = a.as_pointer()
+            if p != me and p in frame.ptrs and drawn.get(p) != sig and now - last.get(p, 0.0) > 0.1:
+                last[p] = now
+                a.tag_redraw()
+    except (AttributeError, ReferenceError, RuntimeError, TypeError):
+        pass
+
+
+def bars_draw(draw):
+    """Dessine une barre du bas dans son cadre. Une vue 3D ordinaire : sa région. Les 4 vues (séparées, ou le Toggle Quad
+    View de Blender) : l'ensemble des quatre — chaque vue dessine alors la même barre, décalée, et n'en montre que sa
+    part : on voit une seule barre, centrée sous les quatre vues, au lieu d'une barre par vue."""
     context = bpy.context
     area, region = context.area, context.region
-    if area is None or region is None or not pref("cmd_line"):
+    if area is None or region is None:
+        return
+    q = quad_bars(area)
+    if q is None and quad_is_column(area):       # colonne de la barre d'outils des 4 vues : aucune barre
+        quad_column_watch(area, context.window)  # (la barre d'outils a changé de largeur : la colonne la suit)
+        return
+    if q is not None:                           # 4 vues séparées : les barres de la vue active
+        owner, fr, ptrs = q
+        frame = BarsFrame(*fr, clear=True, ptrs=ptrs)
+        with gpu.matrix.push_pop():
+            gpu.matrix.translate((float(fr[0] - region.x), float(fr[1] - region.y)))
+            draw(BarsContext(context, owner), owner, frame)
+        bars_sync(area, owner, frame)
+        return
+    fr = bars_frame(area, region)
+    if fr is None or (fr[0] == region.x and fr[1] == region.y and fr[2] == region.width and fr[3] == region.height):
+        draw(context, area, region)
+        return
+    with gpu.matrix.push_pop():                 # Toggle Quad View de Blender : ses quatre régions
+        gpu.matrix.translate((float(fr[0] - region.x), float(fr[1] - region.y)))
+        draw(context, area, BarsFrame(*fr))
+
+
+def bar_mouse_ptr(ptr, frame):
+    """Vue dont la position de souris sert au survol des barres : celle-ci, ou parmi les 4 vues la dernière survolée."""
+    ptrs = getattr(frame, "ptrs", None) or (ptr,)
+    times = _CMD.get("mouse_t", {})
+    best = None
+    for p in ptrs:
+        if p in _CMD["mouse"] and (best is None or times.get(p, 0.0) > times.get(best, 0.0)):
+            best = p
+    return best
+
+
+def bar_mouse(ptr, frame):
+    """Position de la souris dans le cadre des barres (elle est notée dans la région qu'elle survole), ou None."""
+    p = bar_mouse_ptr(ptr, frame)
+    if p is None:
+        return None
+    pos = _CMD["mouse"][p]
+    org = _CMD.get("mouse_org", {}).get(p)
+    if org is None:
+        return pos
+    return (pos[0] + org[0] - frame.x, pos[1] + org[1] - frame.y)
+
+
+def cmd_bar_cb():
+    bars_draw(cmd_bar_draw)
+
+
+def cmd_bar_draw(context, area, region):
+    """region : le cadre des barres (la région de dessin, ou l'ensemble des 4 vues de Blender)."""
+    if not pref("cmd_line"):
         return
     ptr = area.as_pointer()
+    cptr = bars_cmd_ptr(ptr)                   # (4 vues : la vue où la commande est en cours, si ce n'est pas la vue active)
     st = _CMD["input"] if (_CMD["input"] is not None and _CMD["input"]["area"] == ptr) else None
-    prompt = _CMD["prompt"].get(ptr)
+    prompt = _CMD["prompt"].get(cptr)
     tid = DessinBase.active_tool_id(context)
-    if (not prompt and st is None and tid and tid.startswith("dessin.") and _CMD["op"].get(ptr) is None
+    if (not prompt and st is None and tid and tid.startswith("dessin.") and _CMD["op"].get(cptr) is None
             and tid not in _SELECT_TOOL_IDS):
         prompt = _CMD.get("tool_prompt", {}).get(tid)      # outil sélectionné mais pas encore « armé » par la souris
     if tid and tid.startswith("dessin.") and tid not in _SELECT_TOOL_IDS:
         _CMD["last"] = "tool:" + tid
+    if bars_hidden(context, ptr, st is not None or _CMD["op"].get(cptr) is not None):
+        return
     try:
         sysp0 = context.preferences.system
         base = max(1.0, (sysp0.ui_scale or 1.0) * ((sysp0.dpi or 72) / 72.0))   # sans pixel_size : blf le gère déjà (Retina)
@@ -1074,12 +1481,12 @@ def cmd_bar_cb():
     space = area.spaces.active
     sysp = context.preferences.system
     left, right = 0.0, 0.0
-    if getattr(sysp, "use_region_overlap", False):
+    if getattr(sysp, "use_region_overlap", False) and not getattr(region, "clear", False):
         for r in area.regions:
             if r.type == 'TOOLS' and getattr(space, "show_region_toolbar", True):
                 left += r.width
-            elif r.type == 'UI' and getattr(space, "show_region_ui", True):
-                right += r.width
+            # la barre latérale (N) n'est pas déduite : les barres gardent leur place et leur taille, le panneau passe
+            # par-dessus (N pour le refermer)
     cx = region.width / 2.0                                   # centre du viewport (toute la largeur, panneaux compris)
     vw0 = _GROUP["views"].get(ptr, 0.0)
     mw0 = modes_total_w(context, ptr, sc)
@@ -1123,7 +1530,7 @@ def cmd_bar_cb():
 
     # contenu : lignes de pilule (liste d'éléments ("t", texte, couleur) ou ("c", touche, libellé))
     hits = []
-    mouse = _CMD["mouse"].get(ptr)
+    mouse = bar_mouse(ptr, region)
     lines, sugg_rows = [], []
     if st is not None:
         text = st["text"]
@@ -1177,26 +1584,34 @@ def cmd_bar_cb():
         kname = {k: n for k, n, _d in CMD_KEY_ITEMS}.get(key, "")
         row = [("t", "›", "dim"), ("t", "Type a command", "faint")]
         if last is not None and key != 'NONE':
-            row.append(("t", "repeat " + last["label"], "faint"))
+            row.append(("t", ("repeat " + last["label"]) if lang() in ('EN', 'FR') else tr_label("repeat") + " " + tr_label(last["label"]), "faint"))
         lines.append((row, [("c", kname, "", 'open')] if key != 'NONE' else []))
 
-    # mise en page : une ligne ; les puces passent sur une 2e ligne si elles ne tiennent pas
+    # mise en page : une ligne ; un texte trop long passe à la ligne au lieu d'être coupé (invite de Fillet Edge...) ; les
+    # puces passent sous le texte si elles ne tiennent pas à sa suite
     row, chips = lines[0]
     if lang() == 'FR':
         chips = [(c[0], c[1], tr_text(c[2]), c[3]) for c in chips]
     inner = maxw - 2 * padx
-    row_items = []
-    used = 0.0
-    for item in row:
-        a, b = tr_text(item[1]), item[2]
-        bold = len(item) > 3 and item[3]
-        _cmd_bold(bold)
-        t = shrink(a, max(40 * sc, inner - used - (gap if used else 0)))
-        row_items.append((t, b, bold))
-        used += (gap if used else 0) + W(t)
-        _cmd_bold(False)
+    if st is not None:                # saisie d'une commande : une seule ligne, le texte tapé se raccourcit
+        row_items = []
+        used = 0.0
+        for item in row:
+            a, b = tr_text(item[1]), item[2]
+            bold = len(item) > 3 and item[3]
+            _cmd_bold(bold)
+            t = shrink(a, max(40 * sc, inner - used - (gap if used else 0)))
+            row_items.append((t, b, bold))
+            used += (gap if used else 0) + W(t)
+            _cmd_bold(False)
+        text_lines = [row_items]
+    else:
+        wrapped = cmd_wrap_row([(tr_text(item[1]), item[2], bool(len(item) > 3 and item[3])) for item in row if item[1]],
+                               inner, gap, key=round(size, 2))
+        text_lines = [[(t, b, bold) for t, b, bold, _w in ln] for ln in wrapped]
+        used = max((sum(i[3] for i in ln) + gap * (len(ln) - 1) for ln in wrapped if ln), default=0.0)
     chips_w = sum(chip_w(c[1], c[2]) + gap for c in chips)
-    two_rows = used + (gap + chips_w if chips else 0) > inner
+    two_rows = len(text_lines) > 1 or used + (gap + chips_w if chips else 0) > inner
     if st is not None:
         used = max(used, 300 * sc)
     chip_rows = []
@@ -1209,7 +1624,7 @@ def cmd_bar_cb():
                 curw = 0.0
             curw += cw_ + (gap if chip_rows[-1] else 0.0)
             chip_rows[-1].append(c)
-    nrows = 1 + len(chip_rows) if chip_rows else 1
+    nrows = len(text_lines) + len(chip_rows)
     if fixed_w:
         width = maxw                # vue réduite : largeur fixe (voir cmd_fixed_width), le contenu s'y adapte
     else:
@@ -1262,11 +1677,14 @@ def cmd_bar_cb():
     fill(th["bg"], _cmd_rrect(x0, y0, x0 + width, y0 + h, rad))
     ty = y0 + h - pv - lh + (lh - size) / 2.0 + size * 0.12
     x = x0 + padx
-    for t, colname, bold in row_items:
-        _cmd_bold(bold)
-        put(x, ty, t, th[colname])
-        x += W(t) + gap
-        _cmd_bold(False)
+    for l_i, line_items in enumerate(text_lines):
+        x = x0 + padx
+        for t, colname, bold in line_items:
+            _cmd_bold(bold)
+            put(x, ty - l_i * (lh + 4 * sc), t, th[colname])
+            x += W(t) + gap
+            _cmd_bold(False)
+
     def draw_chips(chip_list, x, cy):
         for _k, k, lab, act in chip_list:
             w = chip_w(k, lab)
@@ -1285,7 +1703,7 @@ def cmd_bar_cb():
 
     if chip_rows:
         for r_i, row_chips in enumerate(chip_rows):
-            draw_chips(row_chips, x0 + padx, y0 + h - pv - lh - (r_i + 1) * (lh + 4 * sc))
+            draw_chips(row_chips, x0 + padx, y0 + h - pv - lh - (len(text_lines) + r_i) * (lh + 4 * sc))
     elif chips:
         total = sum(chip_w(c[1], c[2]) for c in chips) + gap * (len(chips) - 1)
         draw_chips(chips, x0 + width - padx - total if st is not None else x, y0 + h - pv - lh)
@@ -1330,14 +1748,15 @@ def call_menu_later(context, name):
     bpy.app.timers.register(run, first_interval=0.2)
 
 
-MODE_BUTTONS = (("grid_snap", "Grid Snap", "Grid Snap (F9): the cursor snaps to the grid of the construction plane (arrow: snap spacing)"),
+# Quick Type en premier : au plus près de la ligne de commande, qu'il ouvre
+MODE_BUTTONS = (("cmd_type", "Quick Type", "Quick Type on / off (Shift+Q): typing a letter starts the command line (letters then lose Blender's own shortcuts; Space still opens it)"),
+                ("grid_snap", "Grid Snap", "Grid Snap (F9): the cursor snaps to the grid of the construction plane (arrow: snap spacing)"),
                 ("ortho", "Ortho", "Ortho (F8): the cursor stays horizontal or vertical"),
                 ("polar", "Polar", "Polar tracking (F10): the cursor snaps to angle steps (arrow: choose the step)"),
                 ("osnap_enable", "OSnap", "Object snaps on / off (F3): End, Mid, Cen... (arrow: choose the snaps; Shift + click on one: one shot)"),
                 ("smart_tracks", "SmartTrack", "Smart tracks on / off: alignment guides from points you hover"),
                 ("gumball", "Gumball", "Gumball on / off: move / rotate / scale handles on the selection (arrow: Gumball menu, orientation Global / Local / View, Snappy Dragging = object snaps while dragging)"),
-                ("auto_cplane", "Auto CPlane", "Auto CPlane on / off: the construction plane follows the planar object or face you select (arrow: Sticky option, back to the ground plane)"),
-                ("cmd_type", "Quick Type", "Quick Type on / off (Shift+Q): typing a letter starts the command line (letters then lose Blender's own shortcuts; Space still opens it)"))
+                ("auto_cplane", "Auto CPlane", "Auto CPlane on / off: the construction plane follows the planar object or face you select (arrow: Sticky option, back to the ground plane)"),)
 MODE_ARROWS = {"grid_snap": "gridsnapmenu", "polar": "polarmenu", "osnap_enable": "osnapmenu", "gumball": "gumballmenu",
                "auto_cplane": "autocplanemenu"}
 OSNAP_LABELS = dict(OSNAP_BAR)
@@ -1358,7 +1777,7 @@ def mode_label(context, key, label):
     if key == "osnap_enable":
         labs = [OSNAP_LABELS.get(k, k) for k in oneshot_keys()]
         if labs:
-            return "OSnap: " + ("+".join(labs) if len(labs) <= 3 else "+".join(labs[:3]) + "…")
+            return tr_label("OSnap") + ": " + ("+".join(labs) if len(labs) <= 3 else "+".join(labs[:3]) + "…")
     return label
 
 
@@ -1744,6 +2163,7 @@ def modes_layout(context, ptr, sc, compact=None, fixed=False):
     items = []
     for k, lab, _t in MODE_BUTTONS:
         if k != "cmd_type" or pref("cmd_line"):
+            lab = tr_label(lab)             # nom du bouton dans la langue du module (Grid Snap -> Magnétisme grille...)
             if not fixed:
                 lab = mode_label(context, k, lab)
             w = MODE_ICON_W * sc if icons else blf.dimensions(0, lab)[0] + 2 * pad
@@ -1795,7 +2215,8 @@ def tabs_for_level(tabs, level):
     texts = tab_short_labels(full) if level >= 1 else full
     out = [(k, v, txt, on, name) for (k, v, _t, on), txt, name in zip(tabs, texts, full)]
     if level >= 3 and len(out) > 2:
-        out = ([t for t in out[:-1] if t[3]][:1] or out[:1]) + out[-1:]      # (aucune vue active : la première)
+        views = [t for t in out[:-1] if t[0] != 'quad']                      # (le bouton des 4 vues n'a plus sa place)
+        out = ([t for t in views if t[3]][:1] or views[:1]) + out[-1:]       # (aucune vue active : la première)
     return out
 
 
@@ -1837,7 +2258,7 @@ def modes_visible(context, ptr):
 
 def drawing_active(context, ptr):
     """Un outil de dessin ou une commande est actif (Ortho, Polar, OSnap, SmartTrack ont alors un sens)."""
-    if _CMD["op"].get(ptr) is not None:
+    if _CMD["op"].get(bars_cmd_ptr(ptr)) is not None:
         return True
     tid = DessinBase.active_tool_id(context)
     return bool(tid and tid.startswith("dessin.") and tid not in _SELECT_TOOL_IDS)
@@ -1871,7 +2292,12 @@ MODE_ICONS = {
     "auto_cplane": [[(1, 11), (4, 5), (13, 5), (10, 11), (1, 11)], [(7, 8), (7, 1.5)], [(5.6, 3.4), (7, 1.5), (8.4, 3.4)]],
     "cmd_type": [[(1, 3), (13, 3), (13, 11), (1, 11), (1, 3)], [(3.1, 5.8), (3.9, 5.8)], [(5.6, 5.8), (6.4, 5.8)],
                  [(8.1, 5.8), (8.9, 5.8)], [(10.6, 5.8), (11.4, 5.8)], [(4, 8.6), (10, 8.6)]],
+    # bouton des vues, à gauche des onglets : quatre cases (passer aux 4 vues), un seul rectangle (revenir à une vue)
+    "quad4": [[(0.5, 2), (13.5, 2), (13.5, 12), (0.5, 12), (0.5, 2)], [(7, 2), (7, 12)], [(0.5, 7), (13.5, 7)]],
+    "quad1": [[(0.5, 2), (13.5, 2), (13.5, 12), (0.5, 12), (0.5, 2)]],
 }
+QUAD_TIPS = {'4': "4 views: Top, Perspective, Front, Right (each with its own display)",
+             '1': "Back to a single view: the active one (or double-click the title of the view to keep)"}
 
 
 def mode_icon_segments(key, cx, cy, s):
@@ -1918,15 +2344,105 @@ def draw_mode_icon(key, cx, cy, s, col, width=1.4):
     draw_lines(mode_icon_segments(key, cx, cy, s), col, width)
 
 
-def views_bar_cb():
-    """Onglets de vues (Top / Front / Perspective / Right...) en bas à gauche de la vue 3D, dessinés comme la barre de commande."""
-    context = bpy.context
-    area, region = context.area, context.region
-    if area is None or region is None:
-        return
+def quad_chip_draw(context, area, region):
+    """4 vues : le titre de la vue, en haut à gauche, comme dans Rhino. Son nom (double-clic : cette vue seule) et une
+    flèche qui ouvre le menu de son affichage (filaire, ombré, textures, rendu). Rien hors des 4 vues."""
     ptr = area.as_pointer()
     try:
+        grid = quad_grid_of(area)
+        if grid is None or is_layout(context.scene):
+            _QUAD["hit"].pop(ptr, None)
+            return
+        name = quad_title(context)
+        active = quad_focus(area.id_data, grid) == ptr       # la vue active (celle que montrent les barres) : titre allumé
+        try:
+            sysp = context.preferences.system
+            base = max(1.0, (sysp.ui_scale or 1.0) * ((sysp.dpi or 72) / 72.0))
+        except (AttributeError, ReferenceError):
+            base = 1.0
+        sc = (1.0 + (base - 1.0) * 0.5) * CMD_SIZE_BASE * (pref("cmd_size") or 100) / 100.0
+        size = 11 * sc
+        _cmd_font(size)
+        # place prise sur la vue par la barre d'outils (à gauche) et par la barre de réglages de l'outil (en haut)
+        left = top = 0.0
+        for r in area.regions:
+            if r.type == 'WINDOW' or r.width <= 1 or r.height <= 1:
+                continue
+            inside_x = r.x < region.x + region.width and r.x + r.width > region.x
+            inside_y = r.y < region.y + region.height and r.y + r.height > region.y
+            if r.type == 'TOOLS' and inside_x and inside_y:
+                left = max(left, r.x + r.width - region.x)
+            elif r.type in {'TOOL_HEADER', 'HEADER'} and inside_x and inside_y and r.y > region.y + region.height / 2.0:
+                top = max(top, region.y + region.height - r.y)
+        th = _cmd_theme()
+        padx, aw = 10 * sc, 20 * sc
+        h = size * 1.6 + 5 * sc
+        tw = blf.dimensions(0, name)[0]
+        x0 = left + 10 * sc
+        y1 = region.height - top - 8 * sc
+        y0 = y1 - h
+        xn = x0 + padx + tw + padx * 0.4            # fin du nom, début de la flèche
+        x1 = xn + aw
+        rad = 8 * sc
+        mouse = _CMD["mouse"].get(ptr)
+        over_n = mouse is not None and x0 <= mouse[0] <= xn and y0 <= mouse[1] <= y1
+        over_a = mouse is not None and xn < mouse[0] <= x1 and y0 <= mouse[1] <= y1
+        shader = get_shader('2D')
+        gpu.state.blend_set('ALPHA')
+
+        def fill(col, tris):
+            _blend_on()
+            shader.bind()
+            shader.uniform_float("color", col)
+            batch_for_shader(shader, 'TRIS', {"pos": tris}).draw(shader)
+
+        fill(th["line"], _cmd_rrect(x0 - 1, y0 - 1, x1 + 1, y1 + 1, rad + 1))
+        fill(th["bg"], _cmd_rrect(x0, y0, x1, y1, rad))
+        if active:                                  # la vue active : son nom sur la couleur de sélection, comme l'onglet allumé
+            fill(th["sel"], _cmd_rrect(x0 + 2 * sc, y0 + 2 * sc, xn - 1 * sc, y1 - 2 * sc, rad - 2 * sc))
+        if over_a or (over_n and not active):
+            a0, a1 = (x0, xn) if over_n else (xn, x1)
+            fill(th["chip"], _cmd_rrect(a0 + 2 * sc, y0 + 2 * sc, a1 - 2 * sc, y1 - 2 * sc, rad - 2 * sc))
+        blf.color(0, *(th["sel_t"] if active else (th["fg"] if (over_n or over_a) else th["dim"])))
+        blf.position(0, x0 + padx, y0 + (h - size) / 2.0 + size * 0.12, 0)
+        blf.draw(0, name)
+        draw_chevron((xn + x1) / 2.0 - 1 * sc, (y0 + y1) / 2.0, 3.2 * sc, th["fg"] if over_a else th["dim"])
+        if over_n or over_a:
+            tip = tr_text("Double-click: this view alone" if over_n else "Display of this view: wireframe, shaded, textures, rendered")
+            lh = size * 1.6
+            tw2 = blf.dimensions(0, tip)[0] + 18 * sc
+            ty1 = y0 - 6 * sc
+            fill(th["line"], _cmd_rrect(x0 - 1, ty1 - lh - 1, x0 + tw2 + 1, ty1 + 1, rad + 1))
+            fill(th["bg"], _cmd_rrect(x0, ty1 - lh, x0 + tw2, ty1, rad))
+            blf.color(0, *th["fg"])
+            blf.position(0, x0 + 9 * sc, ty1 - lh + (lh - size) / 2.0 + size * 0.12, 0)
+            blf.draw(0, tip)
+        _QUAD["hit"][ptr] = [(x0, y0, xn, y1, 'quadname', None), (xn, y0, x1, y1, 'quadmenu', None)]
+        gpu.state.blend_set('NONE')
+    except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
+        _QUAD["hit"].pop(ptr, None)
+
+
+def views_bar_cb():
+    """Onglets de vues (Top / Front / Perspective / Right...) en bas à gauche de la vue 3D, dessinés comme la barre de commande."""
+    try:
+        context = bpy.context
+        if context.area is not None and context.region is not None:
+            quad_chip_draw(context, context.area, context.region)     # 4 vues : le titre de chacune, dans sa propre vue
+    except (AttributeError, ReferenceError):
+        pass
+    bars_draw(views_bar_draw)
+
+
+def views_bar_draw(context, area, region):
+    """region : le cadre des barres (la région de dessin, ou l'ensemble des 4 vues de Blender)."""
+    ptr = area.as_pointer()
+    if bars_hidden(context, ptr, False, views=True):
+        return
+    try:
         tabs = bar_tabs(context)               # vues du modèle, mises en page, puis « + »
+        if not is_layout(context.scene):       # bouton des 4 vues, à gauche des onglets (comme dans Rhino)
+            tabs = [('quad', '1' if quad_grid_of(area) is not None else '4', "", False)] + tabs
     except (AttributeError, ReferenceError):
         return
     try:
@@ -1940,12 +2456,12 @@ def views_bar_cb():
     lh = size * 1.6
     left, right = 0.0, 0.0
     space = area.spaces.active
-    if getattr(context.preferences.system, "use_region_overlap", False):
+    if getattr(context.preferences.system, "use_region_overlap", False) and not getattr(region, "clear", False):
         for r in area.regions:
             if r.type == 'TOOLS' and getattr(space, "show_region_toolbar", True):
                 left += r.width
-            elif r.type == 'UI' and getattr(space, "show_region_ui", True):
-                right += r.width
+            # la barre latérale (N) n'est pas déduite : les barres gardent leur place et leur taille, le panneau passe
+            # par-dessus (N pour le refermer)
     th = _cmd_theme()
     W = lambda t: blf.dimensions(0, t)[0]
     padx = 12 * sc
@@ -1978,7 +2494,7 @@ def views_bar_cb():
         shader.uniform_float("color", col)
         batch_for_shader(shader, 'TRIS', {"pos": tris}).draw(shader)
 
-    mouse = _CMD["mouse"].get(ptr)
+    mouse = bar_mouse(ptr, region)
     hits = []
     tip = None                  # info-bulle : (texte, zone survolée, bas de sa pastille)
 
@@ -1995,6 +2511,13 @@ def views_bar_cb():
                 fill(th["sel"], _cmd_rrect(rect[0], rect[1], rect[2], rect[3], irad))
             elif over:        # survol d'un bouton non actif : surbrillance discrète, différente de l'état actif (comme Rhino)
                 fill(th["chip"], _cmd_rrect(rect[0], rect[1], rect[2], rect[3], irad))
+            if kind == 'quad':          # bouton des vues : quatre cases, ou un seul rectangle quand les 4 vues sont affichées
+                draw_mode_icon("quad1" if val == '1' else "quad4", (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0,
+                               6.5 * sc, th["fg"] if over else th["dim"], 1.4 * sc)
+                if over:
+                    tip = (tr_text(QUAD_TIPS[val]), rect, y0)
+                x += w + gap
+                continue
             blf.color(0, *(th["sel_t"] if on else (th["fg"] if over else th["dim"])))
             blf.position(0, x + (w - W(text)) / 2.0, y0 + (h - size) / 2.0 + size * 0.12, 0)
             blf.draw(0, text)
@@ -2018,8 +2541,8 @@ def views_bar_cb():
         icons = modes_icons(compact)        # vue réduite, ou préférence « Mode bar: icons only »
         fill(th["line"], _cmd_rrect(mx0 - 1, my0 - 1, mx0 + mw + 1, my0 + mh + 1, rad + 1))
         fill(th["bg"], _cmd_rrect(mx0, my0, mx0 + mw, my0 + mh, rad))
-        tips = {k: t for k, _l, t in MODE_BUTTONS}
-        names_ = {k: l for k, l, _t in MODE_BUTTONS}
+        tips = {k: tr_text(t) for k, _l, t in MODE_BUTTONS}
+        names_ = {k: tr_label(l) for k, l, _t in MODE_BUTTONS}
         rows_ = modes_rows(items, compact)
         placed = []                     # (clé, libellé, largeur, x, bas de la rangée) : première rangée en haut
         for r_, row_ in enumerate(rows_):
@@ -2061,7 +2584,7 @@ def views_bar_cb():
                      [(arect[0] - 0.5, arect[1] + 6 * sc), (arect[0] + 0.5, arect[1] + 6 * sc), (arect[0] + 0.5, arect[3] - 6 * sc),
                       (arect[0] - 0.5, arect[1] + 6 * sc), (arect[0] + 0.5, arect[3] - 6 * sc), (arect[0] - 0.5, arect[3] - 6 * sc)])
                 draw_chevron((arect[0] + arect[2]) / 2.0, (arect[1] + arect[3]) / 2.0, (3.0 if icons else 3.6) * sc, fg_)
-    if tip is not None and _mode_tip_fresh(ptr):
+    if tip is not None and _mode_tip_fresh(bar_mouse_ptr(ptr, region) or ptr):
         ttxt, rect, ybase = tip
         tw = blf.dimensions(0, ttxt)[0] + 18 * sc
         tx0 = max(min(max(rect[0] - 4 * sc, left + 8 * sc), region.width - right - tw - 8 * sc), 4 * sc)
@@ -2178,6 +2701,23 @@ def language_changed(self=None, context=None):
     _SUGG_MEMO.clear()
     language_caches_clear()
     _reload_addon_later()
+
+
+_LANG_WATCH = {"asked": None}
+
+
+def ui_language_watch():
+    """« Follow Blender's language » : si la langue de l'interface de Blender change, le module la suit (une seule fois
+    par changement, le temps que l'add-on se recharge)."""
+    try:
+        if pref("language") == 'AUTO':
+            code = lang()
+            if code != pref_applied_language() and _LANG_WATCH["asked"] != code:
+                _LANG_WATCH["asked"] = code
+                language_changed()
+    except (AttributeError, RuntimeError, ReferenceError, KeyError):
+        pass
+    return 1.0
 
 
 def _update_cmd_line(self=None, context=None):

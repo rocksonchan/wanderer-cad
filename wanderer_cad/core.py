@@ -18,7 +18,7 @@ IDLE_TOOL = "dessin.selection_boite_tool"  # outil par défaut (Select / Move) r
 IDLE_FALLBACK = "builtin.select_box"
 
 # Réglages des préférences de l'add-on (valeurs utilisées aussi quand les préférences sont inaccessibles)
-PREF_DEFAULTS = {"light_preview": True, "curve_points": True, "rclick_enter": True, "cmd_line": True, "cmd_type": False, "cmd_size": 100, "mode_icons": False, "oda_path": "", "cmd_key": 'SPACE', "esc_deselect": True, "enter_last": True, "auto_idle": True, "smart_tracks": True, "gumball_rot90": True, "gumball_step": '90', "gumball_line": 3.0, "icon_palette": 'EARTH', "language": 'EN', "rich_tooltips": True, "remap_grs": False, "view_pan": False, "view_persp": True, "view_button": 'MIDDLE', "mouse_orbit": 'DEFAULT', "mouse_menu": 'DEFAULT', "mouse_middle": 'DEFAULT', "mouse_menu_tol": 6, "mouse_middle_op": "", "cursor_style": 'AUTOCAD', "cursor_size": 8, "cursor_pick": 2.0, "cursor_color": (1.0, 1.0, 1.0),
+PREF_DEFAULTS = {"light_preview": True, "curve_points": True, "rclick_enter": True, "cmd_line": True, "cmd_type": False, "cmd_size": 100, "mode_icons": False, "cmd_key": 'SPACE', "copy_key": 'ALT', "esc_deselect": True, "enter_last": True, "auto_idle": True, "smart_tracks": True, "gumball_rot90": True, "gumball_step": '90', "gumball_line": 3.0, "icon_palette": 'EARTH', "language": 'EN', "rich_tooltips": True, "remap_grs": False, "view_pan": False, "view_persp": True, "view_button": 'MIDDLE', "mouse_orbit": 'DEFAULT', "mouse_menu": 'DEFAULT', "mouse_middle": 'DEFAULT', "mouse_menu_tol": 6, "mouse_middle_op": "", "cursor_style": 'AUTOCAD', "cursor_size": 8, "cursor_pick": 2.0, "cursor_color": (1.0, 1.0, 1.0),
                  "nav_style": 'BLENDER', "nav_zoom_cursor": False, "nav_invert_zoom": False,
                  "nav_auto_depth": False, "nav_dblclick_all": False,
                  "show_tool_annotate": False, "show_tool_measure": False, "show_tool_cube": False, "show_tool_select": False, "show_tool_cursor": False, "show_tool_move": False,
@@ -31,6 +31,52 @@ def pref(name):
         return getattr(bpy.context.preferences.addons[__package__].preferences, name)
     except (KeyError, AttributeError, ReferenceError):
         return PREF_DEFAULTS[name]
+
+
+# ---- copier en glissant : Alt (Rhino) ou Maj (3ds Max), au choix dans les préférences ----
+# L'autre touche reprend le rôle habituel de Maj pendant le glisser (garder l'axe dominant, échelle uniforme, rotation libre).
+_MOD_TYPES = {'ALT': frozenset({'LEFT_ALT', 'RIGHT_ALT'}), 'SHIFT': frozenset({'LEFT_SHIFT', 'RIGHT_SHIFT'})}
+
+
+def copy_shift():
+    """True si l'on copie avec Maj (3ds Max), False avec Alt (Rhino)."""
+    return pref("copy_key") == 'SHIFT'
+
+
+def copy_held(event):
+    """La touche de copie est-elle maintenue ?"""
+    return bool(event.shift if copy_shift() else event.alt)
+
+
+def lock_held(event):
+    """L'autre touche (rôle habituel de Maj : axe dominant, échelle uniforme, rotation libre) est-elle maintenue ?"""
+    return bool(event.alt if copy_shift() else event.shift)
+
+
+def copy_key_name():
+    return "Shift" if copy_shift() else "Alt"
+
+
+def lock_key_name():
+    return "Alt" if copy_shift() else "Shift"
+
+
+def copy_mod_event(event, copying):
+    """Évènement d'une touche Alt ou Maj pendant un glisser : (copie, verrou) ou None si ce n'en est pas une.
+    Avec Maj (3ds Max), la copie reste acquise une fois la touche pressée, comme dans 3ds Max."""
+    et = event.type
+    if et not in _MOD_TYPES['ALT'] and et not in _MOD_TYPES['SHIFT']:
+        return None
+    press = event.value == 'PRESS'
+    ck, lk = ('SHIFT', 'ALT') if copy_shift() else ('ALT', 'SHIFT')
+    cp = press if et in _MOD_TYPES[ck] else copy_held(event)
+    lock = press if et in _MOD_TYPES[lk] else lock_held(event)
+    return (bool(copying) or cp) if copy_shift() else cp, lock
+
+
+def copy_update(event, copying):
+    """État de la copie après un mouvement de souris (Maj : acquise une fois pressée)."""
+    return (bool(copying) or copy_held(event)) if copy_shift() else copy_held(event)
 
 
 _LAST_TYPED = {}     # dernière valeur saisie, par outil et par étape : Entrée sans rien taper la reprend (comme Rhino)
@@ -84,7 +130,7 @@ FR_LABELS = {
     "Polygon: Area": "Polygone : aire", "Polygon: Center, Radius": "Polygone : centre, rayon",
     "Polygon: Circumscribed": "Polygone : circonscrit", "Polygon: Edge": "Polygone : arête", "Polygon: Star": "Polygone : étoile",
     "Polyline": "Polyligne", "Polyline (point by point)": "Polyligne (point par point)", "Project Curve": "Projeter une courbe",
-    "Pyramid": "Pyramide", "Radius / Diameter": "Rayon / diamètre", "Center Mark": "Marque de centre", "Hatch": "Hachure", "Untrim": "Désajuster", "Untrim Holes": "Désajuster les trous", "Block": "Bloc", "Insert Block": "Insérer un bloc", "Block Edit": "Éditer le bloc", "Close Block Edit": "Fermer l'édition du bloc", "Explode Block": "Décomposer le bloc", "Blocks": "Blocs", "Delete Block": "Supprimer le bloc", "Select Block Copies": "Sélectionner les copies du bloc", "No block yet": "Aucun bloc", "Rebuild Curve": "Reconstruire la courbe", "Simplify Curve": "Simplifier la courbe", "Change Degree": "Changer le degré", "Insert Control Point": "Insérer un point de contrôle", "Remove Control Point": "Supprimer un point de contrôle", "Match Curve": "Raccorder la courbe", "Blend Curve": "Courbe de raccord", "Network Surface": "Surface par réseau", "Fillet Surface": "Raccord de surfaces", "Chamfer Surface": "Chanfrein de surfaces", "Extend Surface": "Prolonger la surface", "Split at Isocurve": "Couper à l'isocourbe", "Continue Dimension": "Cote continue", "Ordinate Dimension": "Cote ordonnée", "Arc Length Dimension": "Cote de longueur d'arc", "Move Dimension Line": "Déplacer la ligne de cote", "Selected dimension": "Cote sélectionnée", "Hatch Region": "Hachure par point", "Hatch Base Point": "Point de base de hachure", "Explode Hatch": "Décomposer la hachure", "Hatch Boundary": "Contour de hachure", "Match Hatch": "Copier la hachure", "New hatches": "Nouvelles hachures", "Base Point": "Point de base", "Boundary": "Contour", "By Point": "Par point", "Rail Revolve": "Révolution sur rail",
+    "Pyramid": "Pyramide", "Radius / Diameter": "Rayon / diamètre", "Center Mark": "Marque de centre", "Hatch": "Hachures", "Untrim": "Désajuster", "Untrim Holes": "Désajuster les trous", "Block": "Bloc", "Insert Block": "Insérer un bloc", "Block Edit": "Éditer le bloc", "Close Block Edit": "Fermer l'édition du bloc", "Explode Block": "Décomposer le bloc", "Blocks": "Blocs", "Delete Block": "Supprimer le bloc", "Select Block Copies": "Sélectionner les copies du bloc", "No block yet": "Aucun bloc", "Rebuild Curve": "Reconstruire la courbe", "Simplify Curve": "Simplifier la courbe", "Change Degree": "Changer le degré", "Insert Control Point": "Insérer un point de contrôle", "Remove Control Point": "Supprimer un point de contrôle", "Match Curve": "Raccorder la courbe", "Blend Curve": "Courbe de raccord", "Network Surface": "Surface par réseau", "Fillet Surface": "Raccord de surfaces", "Chamfer Surface": "Chanfrein de surfaces", "Extend Surface": "Prolonger la surface", "Split at Isocurve": "Couper à l'isocourbe", "Continue Dimension": "Cote continue", "Ordinate Dimension": "Cote ordonnée", "Arc Length Dimension": "Cote de longueur d'arc", "Move Dimension Line": "Déplacer la ligne de cote", "Selected dimension": "Cote sélectionnée", "Hatch Region": "Hachure par point", "Hatch Base Point": "Point de base de hachure", "Explode Hatch": "Décomposer la hachure", "Hatch Boundary": "Contour de hachure", "Match Hatch": "Copier la hachure", "New hatches": "Nouvelles hachures", "Base Point": "Point de base", "Boundary": "Contour", "By Point": "Par point", "Rail Revolve": "Révolution sur rail",
     "Remove All Materials": "Supprimer tous les matériaux", "Rename Named View": "Renommer la vue nommée",
     "Reset to defaults": "Valeurs par défaut", "Restore Named View": "Restaurer la vue nommée", "Revolve": "Révolution",
     "Rotate": "Rotation", "Rotate (center, reference, angle)": "Rotation (centre, référence, angle)",
@@ -97,7 +143,7 @@ FR_LABELS = {
     "Ungroup": "Dégrouper", "Update Named View": "Mettre à jour la vue nommée",
     # commandes générales
     "Undo": "Annuler", "Redo": "Rétablir", "Delete": "Supprimer", "Select All": "Tout sélectionner", "Select None": "Tout désélectionner",
-    "Invert Selection": "Inverser la sélection", "Hide": "Masquer", "Isolate": "Isoler", "Show All": "Tout afficher",
+    "Invert Selection": "Inverser la sélection", "Hide": "Masquer", "Isolate": "Isoler", "Local View": "Vue locale", "Quit Local View": "Quitter la vue locale", "Show All": "Tout afficher", "Lock": "Verrouiller", "Unlock All": "Tout déverrouiller", "Unlock Selected": "Déverrouiller la sélection",
     "Zoom Extents": "Zoom étendu", "Zoom Selected": "Zoom sur la sélection", "Perspective / Ortho": "Perspective / orthogonale",
     "Wireframe": "Filaire", "Shaded": "Ombré", "Rendered": "Rendu", "X-Ray": "Rayons X", "Grid": "Grille",
     "Cursor to Origin": "Curseur à l'origine", "Save": "Enregistrer", "Select Similar": "Sélectionner similaire",
@@ -109,11 +155,15 @@ FR_LABELS = {
     "Local View": "Vue locale", "Camera View": "Vue caméra", "Cursor to Selected": "Curseur sur la sélection",
     # vues
     "Top": "Dessus", "Front": "Face", "Right": "Droite", "Back": "Arrière", "Left": "Gauche", "Bottom": "Dessous",
-    "Perspective": "Perspective",
+    "Perspective": "Perspective", "Axonometric": "Axonométrie",
+    # barre de modes (comme Rhino en français : Ortho, SmartTrack et Gumball gardent leur nom)
+    "Grid Snap": "Magnétisme grille", "Polar": "Polaire", "OSnap": "Accrochage", "Auto CPlane": "Auto CPlan",
+    "Quick Type": "Saisie rapide", "repeat": "répéter",
 }
 
 FR_ALIASES = {
     "layout_detail_tool": "fenetre fmult detail",
+    "detail_callout_tool": "vuedetail detailagrandi",
     # alias de l'AutoCAD français (DP, CP, RI, EH, DC, AJ, E, DO, PO, L...) + noms français complets
     "deplacer_tool": "dp deplacer", "copier_tool": "cp copier", "selection_boite_tool": "selectionner", "selection_lasso_tool": "lasso", "selection_rect_tool": "selboite", "selection_cercle_tool": "selcercle",
     "polyligne_tool": "pl po l ligne polyligne", "plan_tool": "plan", "rotation_tool": "ri rotation pivoter",
@@ -137,7 +187,7 @@ FR_ALIASES = {
     "pipe_tool": "tuyau", "intersect_tool": "intersectionobjets", "section_tool": "coupe", "contour_tool": "contours",
     "extract_srf_tool": "extrairesrf", "dup_border_tool": "dupliquerbord dupliquerbordure", "dup_edge_tool": "dupliquerarete", "dup_face_border_tool": "dupliquerbordface dupliquerbordureface", "extend_crv_tool": "prolonger prolongercourbe allonger",
     "merge_faces_tool": "fusionnerfaces", "unroll_tool": "developper developpersrf", "rebuild_srf_tool": "reconstruiresrf",
-    "orient_tool": "orienter",
+    "orient_tool": "orienter", "orient3pt_tool": "orienter3pts orienter3points",
 }
 FR_LABELS.update({
     "Pipe": "Tuyau", "Intersect": "Intersection d'objets", "Section": "Section", "Contour": "Contour",
@@ -145,12 +195,26 @@ FR_LABELS.update({
     "Alias Editor": "Éditeur d'alias",
     "Extract Surface": "Extraire une surface", "Duplicate Border": "Dupliquer la bordure", "Duplicate Edge": "Dupliquer une arête", "Duplicate Face Border": "Dupliquer la bordure d'une face",
     "Merge All Faces": "Fusionner les faces coplanaires", "Unroll Surface": "Développer une surface",
-    "Rebuild Surface": "Reconstruire une surface", "Orient": "Orienter",
+    "Rebuild Surface": "Reconstruire une surface", "Orient": "Orienter", "Orient 3 Points": "Orienter (3 points)",
 })
 FR_LABELS.update({
     "Layout": "Mise en page", "Layouts": "Mises en page", "New Layout": "Nouvelle mise en page", "Open Layout": "Ouvrir la mise en page",
     "Model": "Objet (modèle)", "Paper Space": "Espace papier", "Next Layout": "Mise en page suivante", "Rename Layout": "Renommer la mise en page",
     "Delete Layout": "Supprimer la mise en page", "Duplicate Layout": "Dupliquer la mise en page", "Page Setup": "Format du papier",
+    "Detail View": "Vue de détail", "Title Block": "Cartouche", "Annotate": "Annoter", "Insert Image": "Insérer une image",
+    "Insert Field": "Insérer un champ", "North Arrow": "Flèche du nord", "Copy to All Layouts": "Copier sur toutes les mises en page",
+    "Title Block Template": "Modèle de cartouche", "Add Cell": "Ajouter une case", "Remove Cell": "Retirer la case", "Move Cell": "Déplacer la case",
+    "Edit Title Block": "Modifier le cartouche", "Title Block Cell": "Case du cartouche", "Convert to Free Drawing": "Convertir en dessin libre",
+    "Select the Title Block": "Sélectionner le cartouche", "Print by Layer": "Impression par calque", "Print Settings": "Réglages d'impression",
+    "Print Width of the Selection": "Épaisseur d'impression de la sélection",
+    "4 Views": "4 vues", "Maximize View": "Agrandir la vue", "View Display": "Affichage de la vue",
+    "Maximize this View": "Agrandir cette vue", "Textures": "Textures",
+    "4 views: Top, Perspective, Front, Right (each with its own display)":
+        "4 vues : Dessus, Perspective, Face, Droite (chacune avec son affichage)",
+    "Back to a single view: the active one (or double-click the title of the view to keep)":
+        "Revenir à une seule vue : la vue active (ou double-clic sur le titre de la vue à garder)",
+    "Double-click: this view alone": "Double-clic : cette vue seule",
+    "Display of this view: wireframe, shaded, textures, rendered": "Affichage de cette vue : filaire, ombré, textures, rendu",
     "Viewport": "Fenêtre", "Viewports": "Fenêtres", "Add Viewport": "Ajouter une fenêtre", "Update Viewports": "Mettre à jour les fenêtres",
     "Fit Viewport": "Cadrer la fenêtre", "Viewport Scale": "Échelle de la fenêtre", "Pan Viewport": "Panoramique dans la fenêtre",
     "Viewport Grip": "Poignée de fenêtre", "Draw a Viewport": "Dessiner une fenêtre", "Display Locked": "Affichage verrouillé",
@@ -166,7 +230,7 @@ FR_ACTION_ALIASES = {
     "Export SVG": "exportersvg", "Export DXF": "exporterdxf",
     "Block Edit": "editerbloc modifbloc", "Close Block Edit": "fermerbloc", "Explode Block": "decomposerbloc", "Hatch Base Point": "basehachure", "Explode Hatch": "decomposerhachure", "Hatch Boundary": "contourhachure", "Match Hatch": "copierhachure",
     "Undo": "annuler", "Redo": "retablir", "Delete": "ef effacer supprimer", "Select All": "toutsel", "Select None": "toutdesel",
-    "Invert Selection": "inverser", "Hide": "masquer", "Isolate": "isoler", "Show All": "toutafficher", "Zoom Extents": "z zoometendu",
+    "Invert Selection": "inverser", "Hide": "masquer", "Isolate": "isoler", "Show All": "toutafficher", "Lock": "verrouiller geler", "Unlock All": "deverrouiller toutdeverrouiller degeler", "Unlock Selected": "deverrouillerselection", "Zoom Extents": "z zoometendu",
     "Zoom Selected": "zoomsel", "Wireframe": "filaire", "Shaded": "ombre", "Rendered": "rendu", "Grid": "grille",
     "Save": "enregistrer", "Local View": "vuelocale", "Camera View": "vuecamera", "Group": "gr grouper", "Ungroup": "degrouper",
 }
@@ -212,7 +276,7 @@ FR_PHRASES = (
     ("it joins the open edges of surfaces, or curves (a closed solid has none: detach a face with Extract Surface first)",
      "il relie les bords ouverts de surfaces, ou des courbes (un solide fermé n'en a pas : détacher d'abord une face avec Extraire une surface)"),
     ("click the corners of the contour", "cliquer les coins du contour"),
-    ("click a circle or an arc", "cliquer un cercle ou un arc"),
+    ("click a circle or an arc", "cliquer un cercle ou un arc"), ("click a circle, an arc or a fillet", "cliquer un cercle, un arc ou un congé"),
     ("click to confirm", "cliquer pour valider"),
     ("move the mouse to choose the side and the distance, or type the distance", "déplacer la souris pour choisir le côté et la distance, ou taper la distance"),
     ("height: move the mouse or type the value then Enter", "hauteur : déplacer la souris ou taper la valeur puis Entrée"),
@@ -361,14 +425,37 @@ FR_PHRASES = (
     ("Shift + click: one shot (next point only)", "Maj + clic : accrochage ponctuel (prochain point seulement)"),
     ("All On", "Tout cocher"), ("All Off", "Tout décocher"), ("Disable (F3)", "Désactiver (F3)"),
     ("Grid Snap On (F9)", "Accrochage à la grille activé (F9)"), ("Grid Snap Off", "Accrochage à la grille désactivé"),
+    ("Distance to move in ", "Distance de déplacement en "), ("Angle to rotate around ", "Angle de rotation autour de "),
+    ("Scale factor along ", "Facteur d'échelle en "),
     ("Snap spacing", "Pas de l'accrochage"), ("Custom...", "Autre valeur..."), ("Spacing", "Pas"),
 )
 _FR_SORTED = tuple(sorted(FR_PHRASES, key=lambda p: -len(p[0])))
 _TR_CACHE = {}
 
 
+_UI_LANG = {"fr": 'FR', "de": 'DE', "es": 'ES', "it": 'IT', "pt": 'PT', "ru": 'RU', "tr": 'TR', "zh": 'ZH', "ja": 'JA', "ko": 'KO'}
+
+
+def interface_language():
+    """Langue de l'interface de Blender ramenée à une langue du module (anglais si elle n'en fait pas partie, ou si
+    l'interface de Blender n'est pas traduite)."""
+    try:
+        if not bpy.context.preferences.view.use_translate_interface:
+            return 'EN'
+        loc = bpy.app.translations.locale or ""
+    except (AttributeError, RuntimeError):
+        return 'EN'
+    return ui_lang_code(loc)
+
+
+def ui_lang_code(locale):
+    """'fr_FR' -> 'FR', 'zh_HANS' -> 'ZH', 'pt_BR' -> 'PT'... ; 'EN' pour une langue que le module n'a pas."""
+    return _UI_LANG.get((locale or "")[:2].lower(), 'EN')
+
+
 def lang():
-    return pref("language")
+    code = pref("language")
+    return interface_language() if code == 'AUTO' else code
 
 
 _LANG_APPLIED = {"v": None}
@@ -401,8 +488,10 @@ def tr_label(label):
 
 def tr_text(txt):
     """Texte d'invite dans la langue du module (phrases connues remplacées, le reste inchangé)."""
-    if not txt or lang() != 'FR':
+    if not txt:
         return txt
+    if lang() != 'FR':          # autres langues : seulement les phrases connues telles quelles (« Type a command »...)
+        return labels_of(lang()).get(txt, txt) if lang() != 'EN' else txt
     v = _TR_CACHE.get(txt)
     if v is None:
         v = FR_LABELS.get(txt)
@@ -961,10 +1050,12 @@ def build_bezier_arc(context, name, c, u, v, r, t0, sweep, full):
 
 def addon_globals():
     """Tous les noms du paquet : les classes d'outils et d'opérateurs sont réparties dans ses modules."""
-    import sys
-    out = {}
-    for name, mod in list(sys.modules.items()):
-        if mod is not None and (name == __package__ or name.startswith(__package__ + ".")):
+    import importlib
+    import types
+    pkg = importlib.import_module(__package__)
+    out = dict(vars(pkg))
+    for mod in list(vars(pkg).values()):
+        if isinstance(mod, types.ModuleType) and mod.__name__.startswith(__package__ + "."):
             out.update(vars(mod))
     return out
 

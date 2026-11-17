@@ -25,11 +25,11 @@ class DESSIN_OT_rectangle(DessinBase):
     bl_description = "Draws a rectangle with the mouse, with snapping (C: from center)"
 
     TITLE = "Rectangle"
+    CORNER_STAGES = (1,)
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2
     HAS_CENTER = True
-    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     def prompt(self):
         if not self.points:
@@ -60,11 +60,11 @@ class _PlanBody(DessinBase):
     bl_description = ("Draws a plane (one face): first corner then opposite corner, with snapping (C: from center, or type width / Tab / height)")
 
     TITLE = "Plane"
+    CORNER_STAGES = (1,)
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2
     HAS_CENTER = True
-    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     # même saisie et même aperçu que le rectangle (fonctions réutilisées, pas d'héritage entre classes Blender)
     prompt = DESSIN_OT_rectangle.prompt
@@ -622,6 +622,7 @@ class DESSIN_OT_sketch(PolylineBase):
         rv3d = region_rv3d(region, self.area)
         mx, my = event.mouse_x - region.x, event.mouse_y - region.y
         _CMD["mouse"][self.area.as_pointer()] = (mx, my)
+        _CMD.setdefault("mouse_org", {})[self.area.as_pointer()] = (region.x, region.y)
         _CMD.setdefault("mouse_t", {})[self.area.as_pointer()] = time.monotonic()
         if not self.points:
             self.axis = drawing_axis(rv3d)
@@ -1159,10 +1160,10 @@ class DESSIN_OT_ellipse_coin(DessinEllipse):
     bl_description = ("Ellipse inscribed in a rectangle: two opposite corners (or type width, Tab, height, Enter)")
 
     TITLE = "Ellipse: By Corners"
+    CORNER_STAGES = (1,)   # fork 2026-11-17: opposite corner ignores Ortho / Polar, like the author's Rectangle
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2
-    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     def prompt(self):
         return "first corner" if not self.points else "opposite corner   (Shift: circle, or type width, Tab, height, Enter)"

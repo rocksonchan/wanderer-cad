@@ -52,8 +52,8 @@ rec(SEC,"chaque réglage des préférences est dessiné quelque part",not missin
 rec(SEC,"les réglages liés au clic droit et au bouton du milieu apparaissent quand ils servent",
     where2.get("mouse_menu_tol")=="dessin_prefs_navigation" and where2.get("mouse_middle_op")=="dessin_prefs_navigation",
     (where2.get("mouse_menu_tol"),where2.get("mouse_middle_op")))
-rec(SEC,"le bouton de remise à zéro et les boutons de thème sont là",
-    any(c[2]=="dessin.prefs_reset" for c in CALLS if c[1]=="op") and len([c for c in CALLS if c[1]=="op" and c[2]=="dessin.install_theme"])==6)
+rec(SEC,"le bouton de remise à zéro est là, et plus aucun bouton de thème (thèmes retirés de l'add-on)",
+    any(c[2]=="dessin.prefs_reset" for c in CALLS if c[1]=="op") and not [c for c in CALLS if c[1]=="op" and "theme" in c[2]])
 # chaque réglage est dans la section qui lui correspond
 where={c[2]:c[0] for c in CALLS if c[1]=="prop"}
 expect={"nav_style":"navigation","mouse_orbit":"navigation","view_pan":"navigation","rclick_enter":"navigation",
@@ -61,12 +61,11 @@ expect={"nav_style":"navigation","mouse_orbit":"navigation","view_pan":"navigati
         "cursor_style":"drawing","curve_points":"drawing","light_preview":"drawing","esc_deselect":"drawing",
         "icon_palette":"appearance","language":"appearance","rich_tooltips":"appearance",
         "gumball_step":"gumball","show_toolbar_tools":"toolbar","show_tool_cursor":"toolbar",
-        "snap_budget":"perf","curve_quality":"perf","far_warning":"perf","oda_path":"dxf"}
+        "snap_budget":"perf","curve_quality":"perf","far_warning":"perf"}
 bad=[(k,where.get(k)) for k,sec in expect.items() if where.get(k)!="dessin_prefs_"+sec]
 rec(SEC,"chaque réglage est dans la section attendue",not bad,bad)
-rec(SEC,"les six thèmes sont proposés, sombres puis clairs",
-    [n for _k,n in m.THEME_NAMES]==["Blueprint","Carbon","Midnight","Graphite","Vellum","Ivory"],[n for _k,n in m.THEME_NAMES])
-for op in ('dessin.restore_theme', 'dessin.theme_reset'):
-    rec(SEC, "Appearance exposes " + op,
-        sum(c == ('dessin_prefs_appearance', 'op', op) for c in CALLS) == 1)
+rec(SEC,"la section Appearance dit où trouver les thèmes (site des extensions Blender)",
+    "themes are no longer included" in str(CALLS) and "extensions.blender.org" in str(CALLS))
+rec(SEC,"plus de thèmes dans l'add-on : ni opérateur, ni dossier","install_theme" not in dir(bpy.ops.dessin) and not hasattr(m,"THEME_NAMES")
+    and not _os.path.isdir(_os.path.join(_HERE,'..','wanderer_cad','themes')))
 summary()

@@ -15,7 +15,7 @@ st = BC.scene.dessin
 SEC = "?"
 def chk(name, ok, meas=""): rec(SEC, name, ok, meas)
 ptr = area.as_pointer()
-LEFT = RIGHT = 44
+LEFT, RIGHT = 44, 0       # la barre latérale (N) ne compte pas : elle passe par-dessus les barres
 install(ui_scale=1.0)
 JOIN = staticmethod(lambda context: "dessin.join_tool")
 m.DessinBase.active_tool_id = JOIN                   # un outil armé : la ligne de commande montre son indication
@@ -34,8 +34,13 @@ def wide(p): return p[2] - p[0]
 def ymid(p): return (p[1] + p[3]) / 2.0
 def same_row(a, b): return a[1] < b[3] - 0.01 and b[1] < a[3] - 0.01          # les deux pastilles se font face
 def texts(ops): return [o[3] for o in ops if o[0] == "text"]
-def icons(ops): return [o for o in ops if o[0] == "LINES"]
 def hits(): return list(m._VBAR["hit"].get(ptr, ()))
+def quad_hit(): return next((h for h in hits() if h[4] == 'quad'), None)
+def in_rect(o, h):
+    xs = [p[0] for p in o[1]]; ys = [p[1] for p in o[1]]
+    return h is not None and h[0] - 0.01 <= min(xs) and max(xs) <= h[2] + 0.01 and h[1] - 0.01 <= min(ys) and max(ys) <= h[3] + 0.01
+def icons(ops): return [o for o in ops if o[0] == "LINES" and not in_rect(o, quad_hit())]      # icônes des modes (pas le bouton des 4 vues)
+def quad_icon(ops): return [o for o in ops if o[0] == "LINES" and in_rect(o, quad_hit())]
 def mode_hits(): return [h for h in hits() if h[4] == 'mode']
 def tab_hits(): return [h for h in hits() if h[4] in ('view', 'layout', 'viewmenu')]
 def tab_texts(ops): return [t for t in texts(ops) if t in ("Top", "Front", "Perspective", "Right", "T", "F", "P", "R", "+")]
@@ -47,6 +52,7 @@ for k, _l, _t in m.MODE_BUTTONS:
 LABELS = [l for _k, l, _t in m.MODE_BUTTONS]
 sc = 0.9          # taille 100 % (échelle d'interface 1)
 G = 18 * sc
+QW = 26 * sc      # bouton des 4 vues, à gauche des onglets : une case de 24 et son écart de 2 (à l'échelle)
 def mk_tabs(names, active="Perspective"):
     return [('view', n, n, n == active) for n in names] + [('viewmenu', '+', '+', False)]
 TABS = mk_tabs(["Top", "Front", "Perspective", "Right"])
@@ -116,9 +122,17 @@ chk("... aucune icône n'est tracée", not icons(ops), len(icons(ops)))
 full_hits = [(h[4], h[5]) for h in hits()]
 chk("... zones cliquables : 5 onglets puis 8 boutons et 5 flèches", [h[5] for h in mode_hits()] == MODE_KEYS and len(tab_hits()) == 5, full_hits)
 
+q = quad_hit()
+chk("bouton des 4 vues : une case de 24 px à gauche des onglets, dans la même pastille, dessinée en icône (quatre cases)",
+    q is not None and q[5] == '4' and abs((q[2] - q[0]) - 24 * sc) < 1e-6 and q[2] <= min(h[0] for h in tab_hits()) and P[1][0] <= q[0]
+    and len(quad_icon(ops)) == 1 and len(quad_icon(ops)[0][1]) == 2 * 6 and hits()[0][4] == 'quad', (q, len(quad_icon(ops))))
+ops, width, compact = draw(950, LEFT, RIGHT, mouse=mid(q), tip=True)
+chk("... son info-bulle au survol : « 4 views... »", any(t.startswith("4 views") for t in texts(ops)), texts(ops)[-2:])
+ops, width, compact = draw(950, LEFT, RIGHT)
+
 # ================= 5. Vue réduite : directement en compact, les deux en bas =================
 SEC = "réduite"
-free_lim = int(L0 + 24 * sc) + 1               # première largeur libre où les deux barres complètes tiennent côte à côte
+free_lim = int(L0 + QW + 24 * sc) + 1          # première largeur libre où les deux barres complètes tiennent côte à côte
 ops, width, compact = draw(free_lim, LEFT, RIGHT); P = pills(ops)
 chk(f"{free_lim} px libres : encore en toutes lettres, vues et modes côte à côte", compact == 0 and same_row(P[1], P[2]) and "Grid Snap" in texts(ops))
 ops, width, compact = draw(free_lim - 2, LEFT, RIGHT); P = pills(ops)
@@ -182,9 +196,9 @@ rows_y = sorted({round(h[1], 2) for h in mode_hits()})
 chk("420 px libres : les icônes prennent deux rangées, à côté des vues T F P R +", compact == 2 and len(rows_y) == 2 and tab_texts(ops) == ["T", "F", "P", "R", "+"] and same_row(P[1], P[2]) and P[1][2] <= P[2][0],
     [tuple(round(v) for v in p) for p in P])
 top_row = [h[5] for h in mode_hits() if round(h[1], 2) == rows_y[1]]; bot_row = [h[5] for h in mode_hits() if round(h[1], 2) == rows_y[0]]
-chk("... Grid Snap, Ortho, Polar, OSnap en haut ; SmartTrack, Gumball, Auto CPlane, Quick Type en bas",
-    [k for k in top_row if k in ("grid_snap", "ortho", "polar", "osnap_enable")] == ["grid_snap", "ortho", "polar", "osnap_enable"]
-    and [k for k in bot_row if k in ("smart_tracks", "gumball", "auto_cplane", "cmd_type")] == ["smart_tracks", "gumball", "auto_cplane", "cmd_type"], (top_row, bot_row))
+chk("... Quick Type (au plus près de la ligne de commande), Grid Snap, Ortho, Polar en haut ; OSnap, SmartTrack, Gumball, Auto CPlane en bas",
+    [k for k in top_row if k in ("cmd_type", "grid_snap", "ortho", "polar")] == ["cmd_type", "grid_snap", "ortho", "polar"]
+    and [k for k in bot_row if k in ("osnap_enable", "smart_tracks", "gumball", "auto_cplane")] == ["osnap_enable", "smart_tracks", "gumball", "auto_cplane"], (top_row, bot_row))
 chk("... la pastille des modes a deux rangées de haut et contient tous ses boutons", abs((P[2][3] - P[2][1]) - m.modes_height(sc, 2)) < 1e-6
     and all(P[2][0] <= h[0] and h[2] <= P[2][2] and P[2][1] <= h[1] and h[3] <= P[2][3] for h in mode_hits()), tuple(round(v) for v in P[2]))
 chk("... les vues sont centrées en hauteur sur elle, la ligne de commande est au-dessus des deux", abs(ymid(P[1]) - ymid(P[2])) < 1e-6 and P[0][1] >= P[2][3] and not any(overlap(a, b) for i, a in enumerate(P) for b in P[i + 1:]))
@@ -355,7 +369,7 @@ chk(f"{free_i} px libres (sans le réglage : T F P R +) : les noms des vues rest
     and len(icons(ops)) == n_btn and same_row(P[1], P[2]) and not any(overlap(a, b) for i, a in enumerate(P) for b in P[i + 1:]), tab_texts(ops))
 (w_tool, w_idle, w_run), t_idle, t_run, compact = three(free_i)
 chk("... et la ligne de commande n'y prend pas la largeur fixe (la vue n'est pas réduite)", compact == 0 and w_idle < w_tool - 50, (round(w_tool), round(w_idle), round(w_run)))
-free_c = int(L0i + 24 * sc) - 1
+free_c = int(L0i + QW + 24 * sc) - 1
 ops, width, compact = draw(free_c + 2, LEFT, RIGHT); c_before = compact
 ops, width, compact = draw(free_c, LEFT, RIGHT); P = pills(ops)
 chk(f"{free_c} px libres : les noms ne tiennent plus à côté des icônes -> T F P R +, ligne de commande au-dessus, largeur fixe", c_before == 0 and compact == 1 and tab_texts(ops) == ["T", "F", "P", "R", "+"]

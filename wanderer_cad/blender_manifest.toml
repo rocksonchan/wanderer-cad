@@ -1,14 +1,14 @@
 schema_version = "1.0.0"
 
 id = "wanderer"
-version = "2.96.127"
+version = "2.96.128"
 name = "Wanderer CAD"
 tagline = "Precision CAD modeling with snapping and a command line"
 maintainer = "Hostylmatic / OZLUK Tolga"
 type = "add-on"
 website = "https://github.com/Impressivetravel/wanderer-cad"
 
-tags = ["3D View", "Modeling", "Mesh", "Object", "User Interface"]
+tags = ["Modeling"]
 
 blender_version_min = "4.2.0"
 

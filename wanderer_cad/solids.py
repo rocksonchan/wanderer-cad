@@ -331,13 +331,13 @@ class _BoiteBody(DessinSolid):
     bl_description = ("Box: first corner, opposite corner, then height (C: from center, or type width / Tab / depth / Tab / height)")
 
     TITLE = "Box"
+    CORNER_STAGES = (1,)
     PROP = (1, 2)
     SOLID_NAME = "Box"
     NEEDED = 3
     NUMFIELDS = 3
     HAS_CENTER = True
     HEIGHT_AT = (2,)
-    FREE_CORNER_AT = (1,)   # coin opposé de la base : Ortho / Polar ignorés  EN: opposite base corner: Ortho / Polar ignored
     STAGE_FIELD = {2: 2}
 
     def prompt(self):

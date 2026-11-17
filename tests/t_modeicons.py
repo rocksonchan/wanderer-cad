@@ -92,17 +92,16 @@ GH = _sys.modules[_PKG + ".gumball_handles"]
 gb = [c.__name__ for c in (GH.DESSIN_GGT_gumball, GH.DESSIN_GT_gb_arc, GH.DESSIN_GT_gb_plane, GH.DESSIN_GT_gb_dot, GH.DESSIN_GT_gb_bar) if not registered(c)]
 kinds = [i.identifier for i in bpy.ops.dessin.gumball.get_rna_type().properties["kind"].enum_items]
 chk("Gumball : le groupe de poignées, l'arc de rotation, le carré de déplacement plan, la sphère et le trait sont enregistrés ; l'opération connaît le déplacement plan", not gb and 'PLANE' in kinds, (gb, kinds))
-ops_ = [n for n in ("DESSIN_MT_viewport_scale", "DESSIN_OT_viewport_grip", "DESSIN_OT_viewport_paper", "DESSIN_OT_export_cad", "DESSIN_OT_layout_export_dwg") if not hasattr(bpy.types, n)]
+ops_ = [n for n in ("DESSIN_MT_viewport_scale", "DESSIN_OT_viewport_grip", "DESSIN_OT_viewport_paper", "DESSIN_OT_export_cad") if not hasattr(bpy.types, n)]
 chk("poignées des fenêtres : le groupe de poignées, ses deux formes, la commande et le menu d'échelle sont enregistrés dans Blender", not giz and not ops_, (giz, ops_))
 G = LAY.DESSIN_GGT_viewport_grips
 chk("... le groupe est attaché à la vue 3D et s'efface hors d'une mise en page", G.bl_space_type == 'VIEW_3D' and G.bl_region_type == 'WINDOW' and G.poll(bpy.context) is False, (G.bl_space_type, G.poll(bpy.context)))
 exp = getattr(bpy.types.TOPBAR_MT_file_export.draw, "_draw_funcs", [])
 imp = getattr(bpy.types.TOPBAR_MT_file_import.draw, "_draw_funcs", [])
-chk("menus File > Import et File > Export : l'entrée « DXF / DWG drawing (Wanderer) » y est", any(f.__name__ == "menu_export_cad" for f in exp) and any(f.__name__ == "menu_import_cad" for f in imp),
+chk("menus File > Import et File > Export : l'entrée « DXF drawing (Wanderer) » y est", any(f.__name__ == "menu_export_cad" for f in exp) and any(f.__name__ == "menu_import_cad" for f in imp),
     ([f.__name__ for f in exp][-2:], [f.__name__ for f in imp][-2:]))
-oda = prefs.bl_rna.properties.get("oda_path")
-chk("préférences : le réglage « ODA File Converter » existe (un chemin de fichier, vide par défaut) et il est dans le panneau", oda is not None and oda.subtype == 'FILE_PATH' and prefs.oda_path == ""
-    and props.count("oda_path") == 1 and ("panel", "dessin_prefs_dxf") in calls, (oda and oda.subtype, props.count("oda_path")))
+chk("préférences : plus de réglage « ODA File Converter » ni de panneau DXF / DWG (aucun programme extérieur)",
+    prefs.bl_rna.properties.get("oda_path") is None and ("panel", "dessin_prefs_dxf") not in calls)
 prefs.cmd_line = True
 r = bpy.ops.dessin.prefs_reset('EXEC_DEFAULT')
 chk("« Reset to defaults » décoche le réglage ; la barre repasse en libellés", r == {'FINISHED'} and prefs.mode_icons is False and core.pref("mode_icons") is False and CL.modes_icons(0) is False
