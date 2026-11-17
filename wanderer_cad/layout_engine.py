@@ -1,4 +1,5 @@
-"""Wanderer CAD : Layout — moteur des vues de détail (projection, lignes cachées, découpe) et export vectoriel (PDF, SVG, DXF)."""
+"""Wanderer CAD : Layout — moteur des vues de détail (projection, lignes cachées, découpe) et export vectoriel (PDF, SVG, DXF).
+EN: Wanderer CAD: Layout — engine for detail views (projection, hidden lines, clipping) and vector export (PDF, SVG, DXF)."""
 
 import math
 import time
@@ -12,9 +13,11 @@ from mathutils.bvhtree import BVHTree
 
 # --------------------------------------------------------------------------
 # Formats de papier et échelles
+# EN: Paper sizes and scales
 # --------------------------------------------------------------------------
 
 # (identifiant, nom affiché, largeur, hauteur) en millimètres, côté long d'abord (paysage)
+# EN: (identifier, display name, width, height) in millimetres, long side first (landscape)
 PAPERS = (
     ('A0', "A0", 1189.0, 841.0), ('A1', "A1", 841.0, 594.0), ('A2', "A2", 594.0, 420.0), ('A3', "A3", 420.0, 297.0),
     ('A4', "A4", 297.0, 210.0), ('A5', "A5", 210.0, 148.0),
@@ -28,6 +31,7 @@ PAPERS = (
 PAPER_SIZE = {k: (w, h) for k, _n, w, h in PAPERS}
 
 # (identifiant, nom affiché, dénominateur) : 1 mm de papier = `dénominateur` mm du modèle
+# EN: (identifier, display name, denominator): 1 mm of paper = `denominator` mm of the model
 SCALES = (
     ('S10_1', "10:1", 0.1), ('S5_1', "5:1", 0.2), ('S2_1', "2:1", 0.5),
     ('S1_1', "1:1", 1.0), ('S1_2', "1:2", 2.0), ('S1_5', "1:5", 5.0), ('S1_10', "1:10", 10.0), ('S1_20', "1:20", 20.0),
@@ -38,7 +42,8 @@ SCALE_DEN = {k: d for k, _n, d in SCALES}
 
 
 def scale_preset(den):
-    """Identifiant de l'échelle normalisée qui vaut `den`, sinon 'CUSTOM'."""
+    """Identifiant de l'échelle normalisée qui vaut `den`, sinon 'CUSTOM'.
+    EN: Identifier of the standard scale equal to `den`, otherwise 'CUSTOM'."""
     for k, _n, d in SCALES:
         if abs(d - den) <= 1e-9 * max(1.0, d):
             return k
@@ -46,7 +51,8 @@ def scale_preset(den):
 
 
 def fmt_scale(den):
-    """« 1:20 », « 2:1 », « 1:2.5 »."""
+    """« 1:20 », « 2:1 », « 1:2.5 ».
+    EN: "1:20", "2:1", "1:2.5"."""
     if den <= 0.0:
         return "?"
 
@@ -61,7 +67,8 @@ def fmt_scale(den):
 
 
 def parse_scale(text):
-    """« 1:50 », « 1/50 », « 50 », « 2:1 », « 0.5 » -> dénominateur (None si le texte n'est pas une échelle)."""
+    """« 1:50 », « 1/50 », « 50 », « 2:1 », « 0.5 » -> dénominateur (None si le texte n'est pas une échelle).
+    EN: "1:50", "1/50", "50", "2:1", "0.5" -> denominator (None if the text is not a scale)."""
     t = (text or "").strip().replace(",", ".").replace(" ", "")
     if not t:
         return None
@@ -81,23 +88,29 @@ def parse_scale(text):
 
 # --------------------------------------------------------------------------
 # Lecture du modèle
+# EN: Reading the model
 # --------------------------------------------------------------------------
 
 ANNOT_KEYS = ("dessin_cotation", "dessin_cotation_texte", "dessin_text", "dessin_note", "dessin_hatch")
 GEOM_TYPES = {'MESH', 'CURVE', 'FONT', 'SURFACE', 'META'}
 WIRE_RESOLUTION = 32          # segments par arc de Bézier des courbes filaires (cercles lisses à l'impression)
+# EN: segments per Bézier arc of wire curves (smooth circles when printed)
 
 
 class Item:
     """Un objet du modèle prêt à être projeté.
-    kind : 'SOLID' (faces : arêtes caractéristiques, occulte), 'WIRE' (courbes, arêtes libres), 'ANNOT' (cotes, textes, hachures)."""
+    kind : 'SOLID' (faces : arêtes caractéristiques, occulte), 'WIRE' (courbes, arêtes libres), 'ANNOT' (cotes, textes, hachures).
+    EN: A model object ready to be projected.
+        kind: 'SOLID' (faces: feature edges, occludes), 'WIRE' (curves, loose edges), 'ANNOT' (dimensions, texts, hatches)."""
     __slots__ = ("kind", "name", "color", "V", "E", "cnt", "f0", "f1", "N", "PC", "sharp", "T", "loops", "text")
 
     def __init__(self, kind, name, color):
         self.kind, self.name, self.color = kind, name, color
         self.V = self.E = self.cnt = self.f0 = self.f1 = self.N = self.PC = self.sharp = self.T = None
         self.loops = []          # annotations : contours des faces (aplats exportés), T = leurs triangles (aplats affichés)
+        # EN: annotations: face outlines (exported fills), T = their triangles (displayed fills)
         self.text = False        # annotation de type texte (dessinée par-dessus les traits)
+        # EN: text-type annotation (drawn on top of the lines)
 
 
 def is_annotation(obj):
@@ -111,7 +124,8 @@ def is_annotation(obj):
 
 
 def scene_depsgraph(scene):
-    """Graphe d'évaluation d'une scène, même si ce n'est pas celle de la fenêtre."""
+    """Graphe d'évaluation d'une scène, même si ce n'est pas celle de la fenêtre.
+    EN: Evaluation graph (depsgraph) of a scene, even if it is not the window's scene."""
     try:
         if bpy.context.scene == scene:
             return bpy.context.evaluated_depsgraph_get()
@@ -120,13 +134,15 @@ def scene_depsgraph(scene):
     try:
         vl = scene.view_layers[0]
         vl.update()                   # (crée le graphe d'une scène qui n'a pas encore été affichée, fichier tout juste ouvert)
+        # EN: (creates the graph of a scene not yet displayed, e.g. a file just opened)
         return vl.depsgraph
     except (AttributeError, IndexError, RuntimeError):
         return None
 
 
 def hidden_collections(names):
-    """Noms des collections masquées dans une vue : celles citées et toutes leurs sous-collections."""
+    """Noms des collections masquées dans une vue : celles citées et toutes leurs sous-collections.
+    EN: Names of the collections hidden in a view: the listed ones and all their sub-collections."""
     out = set()
     for n in names:
         col = bpy.data.collections.get(n)
@@ -162,7 +178,8 @@ def _world(co, mat):
 
 
 def _mesh_arrays(me):
-    """(sommets locaux (N,3), arêtes (M,2)) d'un maillage."""
+    """(sommets locaux (N,3), arêtes (M,2)) d'un maillage.
+    EN: (local vertices (N,3), edges (M,2)) of a mesh."""
     nv = len(me.vertices)
     co = np.empty(nv * 3, dtype=np.float32)
     me.vertices.foreach_get("co", co)
@@ -173,7 +190,8 @@ def _mesh_arrays(me):
 
 
 def _edge_faces(me):
-    """Pour chaque arête : nombre de faces qui la portent, et les deux premières (indices de polygones, -1 sinon)."""
+    """Pour chaque arête : nombre de faces qui la portent, et les deux premières (indices de polygones, -1 sinon).
+    EN: For each edge: number of faces using it, and the first two (polygon indices, -1 otherwise)."""
     ne, npoly, nloop = len(me.edges), len(me.polygons), len(me.loops)
     cnt = np.zeros(ne, dtype=np.int32)
     f0 = np.full(ne, -1, dtype=np.int32)
@@ -201,7 +219,8 @@ def _edge_faces(me):
 
 
 def _closed_loops(edges):
-    """Décompose un ensemble d'arêtes de bord [(a, b)] en boucles fermées [[sommets]]."""
+    """Décompose un ensemble d'arêtes de bord [(a, b)] en boucles fermées [[sommets]].
+    EN: Breaks a set of boundary edges [(a, b)] into closed loops [[vertices]]."""
     adj = {}
     for k, (a, b) in enumerate(edges):
         adj.setdefault(a, []).append((k, b))
@@ -238,7 +257,8 @@ def _mesh_tris(me):
 
 
 def _fill_item(item, V, E, cnt, T):
-    """Remplit un Item d'annotation : arêtes libres (traits), contours des faces (aplats) et leurs triangles."""
+    """Remplit un Item d'annotation : arêtes libres (traits), contours des faces (aplats) et leurs triangles.
+    EN: Fills an annotation Item: loose edges (lines), face outlines (fills) and their triangles."""
     loose = cnt == 0
     item.V = V
     item.E = E[loose]
@@ -254,6 +274,7 @@ def _curve_is_wire(obj):
     try:
         if "dessin_cotation" in obj.keys():
             return True          # cote : son épaisseur éventuelle est un trait, pas un volume
+            # EN: dimension: any thickness it has is a line, not a volume
         if cu.extrude != 0.0 or cu.bevel_depth != 0.0 or cu.bevel_object is not None:
             return False
         if cu.dimensions == '2D' and cu.fill_mode != 'NONE':
@@ -264,7 +285,8 @@ def _curve_is_wire(obj):
 
 
 def _temp_mesh(data, setup):
-    """Maillage d'une copie réglée (setup) d'une courbe ou d'un texte : (sommets locaux, arêtes, nombre de faces par arête)."""
+    """Maillage d'une copie réglée (setup) d'une courbe ou d'un texte : (sommets locaux, arêtes, nombre de faces par arête).
+    EN: Mesh of a set-up copy of a curve or text: (local vertices, edges, number of faces per edge)."""
     c2 = data.copy()
     tmp = None
     me = None
@@ -301,7 +323,9 @@ def _setup_font(c):
 
 def collect_model(scene, hidden_names=(), annotations=True):
     """Objets visibles de `scene`, sous forme d'Items en coordonnées du monde.
-    hidden_names : collections (calques) masquées dans cette vue seulement."""
+    hidden_names : collections (calques) masquées dans cette vue seulement.
+    EN: Visible objects of `scene`, as Items in world coordinates.
+        hidden_names: collections (layers) hidden in this view only."""
     dg = scene_depsgraph(scene)
     if dg is None:
         return []
@@ -327,6 +351,7 @@ def collect_model(scene, hidden_names=(), annotations=True):
                 real = False
             if not real:
                 continue          # géométrie évaluée d'une courbe ou d'un texte, déjà lue avec l'objet lui-même
+                # EN: evaluated geometry of a curve or text, already read with the object itself
             shown = par_o
         else:
             shown = orig
@@ -342,6 +367,7 @@ def collect_model(scene, hidden_names=(), annotations=True):
         key = (orig.name, tuple(round(x, 9) for row in mat for x in row))
         if key in seen:
             continue              # même objet au même endroit (géométrie évaluée d'un texte dans un bloc) : une seule fois
+            # EN: same object at the same place (evaluated geometry of a text inside a block): only once
         seen.add(key)
         if orig.type == 'FONT' and not len(orig.modifiers):
             later.append(('FONT', orig, mat, color))
@@ -397,6 +423,7 @@ def collect_model(scene, hidden_names=(), annotations=True):
         finally:
             ob.to_mesh_clear()
     # courbes filaires et textes : relus sur une copie (résolution d'impression, sans épaisseur), hors de la boucle du graphe
+    # EN: wire curves and texts: read again from a copy (print resolution, no thickness), outside the depsgraph loop
     for kind, orig, mat, color in later:
         try:
             if kind == 'FONT':
@@ -416,10 +443,12 @@ def collect_model(scene, hidden_names=(), annotations=True):
 
 # --------------------------------------------------------------------------
 # Projection
+# EN: Projection
 # --------------------------------------------------------------------------
 
 class Projector:
-    """Vue d'un détail : projection parallèle (échelle exacte) ou perspective (échelle exacte dans le plan de la cible)."""
+    """Vue d'un détail : projection parallèle (échelle exacte) ou perspective (échelle exacte dans le plan de la cible).
+    EN: View of a detail: parallel projection (exact scale) or perspective (exact scale in the target's plane)."""
 
     def __init__(self, quat, persp=False, target=(0.0, 0.0, 0.0), dist=10.0):
         self.right = quat @ Vector((1.0, 0.0, 0.0))
@@ -435,7 +464,8 @@ class Projector:
         self.near = self.dist * 1e-3
 
     def uv(self, P):
-        """Points du monde (N,3) -> coordonnées de vue (N,2), en unités du modèle."""
+        """Points du monde (N,3) -> coordonnées de vue (N,2), en unités du modèle.
+        EN: World points (N,3) -> view coordinates (N,2), in model units."""
         P = np.asarray(P, dtype=np.float64).reshape(-1, 3)
         if not self.persp:
             return np.stack((P @ self.r, P @ self.u), axis=1)
@@ -445,13 +475,15 @@ class Projector:
         return np.stack(((d @ self.r) * s, (d @ self.u) * s), axis=1)
 
     def front(self, N, PC):
-        """Faces tournées vers l'observateur."""
+        """Faces tournées vers l'observateur.
+        EN: Faces turned towards the viewer."""
         if not self.persp:
             return (N @ self.l) < 0.0
         return np.einsum('ij,ij->i', N, PC - self.c) < 0.0
 
     def clip_near(self, A, B):
-        """Perspective : segments (A, B) limités à ce qui est devant la caméra."""
+        """Perspective : segments (A, B) limités à ce qui est devant la caméra.
+        EN: Perspective: segments (A, B) trimmed to what is in front of the camera."""
         if not self.persp:
             return A, B
         za, zb = (A - self.c) @ self.l, (B - self.c) @ self.l
@@ -470,18 +502,24 @@ class Projector:
 
 
 class Projection:
-    """Résultat d'une projection, en coordonnées de vue (unités du modèle), avant mise à l'échelle et découpe."""
+    """Résultat d'une projection, en coordonnées de vue (unités du modèle), avant mise à l'échelle et découpe.
+    EN: Result of a projection, in view coordinates (model units), before scaling and clipping."""
 
     def __init__(self):
         self.lines = []       # [(rôle, couleur, segments (M,4))]   rôle : 'vis', 'hid', 'ann'
+        # EN: [(role, colour, segments (M,4))]   role: 'vis', 'hid', 'ann'
         self.fills = []       # [(couleur, [boucles (K,2)], triangles (T,3,2), est un texte)]
+        # EN: [(colour, [loops (K,2)], triangles (T,3,2), is a text)]
         self.bbox = None      # (u0, v0, u1, v1) de tout ce qui est projeté
+        # EN: (u0, v0, u1, v1) of everything projected
         self.edges = 0        # arêtes testées (lignes cachées)
+        # EN: edges tested (hidden lines)
         self.seconds = 0.0
 
 
 def _split_visibility(A, B, L2, step, cast, want_hidden):
-    """Découpe chaque arête 3D (A[i], B[i]) en parties visibles / cachées. cast(p) -> True si p est visible."""
+    """Découpe chaque arête 3D (A[i], B[i]) en parties visibles / cachées. cast(p) -> True si p est visible.
+    EN: Splits each 3D edge (A[i], B[i]) into visible / hidden parts. cast(p) -> True if p is visible."""
     va, vb, ha, hb = [], [], [], []
     for i in range(len(A)):
         a, b = Vector(A[i]), Vector(B[i])
@@ -519,7 +557,9 @@ def _split_visibility(A, B, L2, step, cast, want_hidden):
 
 def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
     """Projette les Items selon `proj`.
-    display : 'WIREFRAME' (toutes les arêtes caractéristiques), 'HIDDEN' (visibles seulement), 'HIDDEN_DASHED' (visibles + cachées)."""
+    display : 'WIREFRAME' (toutes les arêtes caractéristiques), 'HIDDEN' (visibles seulement), 'HIDDEN_DASHED' (visibles + cachées).
+    EN: Projects the Items according to `proj`.
+        display: 'WIREFRAME' (all feature edges), 'HIDDEN' (visible only), 'HIDDEN_DASHED' (visible + hidden)."""
     t_start = time.monotonic()
     out = Projection()
     hidden_mode = display in ('HIDDEN', 'HIDDEN_DASHED')
@@ -527,6 +567,7 @@ def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
     cos_sharp = math.cos(math.radians(sharp_deg))
     cos_tan = math.cos(math.radians(1.0))
     # occultation : toutes les faces des solides
+    # EN: occlusion: all the faces of the solids
     bvh = None
     allV = [it.V for it in items if it.V is not None and len(it.V)]
     if allV:
@@ -562,6 +603,7 @@ def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
             return bvh.ray_cast(p + toward * eps, toward, far)[0] is None
 
     groups = {}          # (rôle, couleur) -> [segments (M,4)]
+    # EN: (role, colour) -> [segments (M,4)]
     boxes = []
 
     def add(role, color, A, B):
@@ -590,6 +632,7 @@ def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
                 loops.append(uv)
             if loops and area <= span * span * 1e-4:
                 loops = []                  # aplat vu par la tranche (texte à plat dans une vue de face) : rien à remplir
+                # EN: fill seen edge-on (flat text in a front view): nothing to fill
             for uv in loops:
                 boxes.append((uv[:, 0].min(), uv[:, 1].min(), uv[:, 0].max(), uv[:, 1].max()))
             if loops:
@@ -624,6 +667,7 @@ def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
         d2 = proj.uv(B) - proj.uv(A)
         L2 = np.hypot(d2[:, 0], d2[:, 1])
         ok = L2 > diag * 1e-7                     # arêtes dans l'axe de la vue : un point, rien à tracer
+        # EN: edges along the view axis: a point, nothing to draw
         A, B, L2 = A[ok], B[ok], L2[ok]
         if not len(A):
             continue
@@ -645,7 +689,8 @@ def project_model(items, proj, display='HIDDEN', sharp_deg=25.0, tangent=False):
 
 
 def model_extent(items, proj):
-    """Emprise (u0, v0, u1, v1) des Items dans la vue `proj`, ou None."""
+    """Emprise (u0, v0, u1, v1) des Items dans la vue `proj`, ou None.
+    EN: Extent (u0, v0, u1, v1) of the Items in view `proj`, or None."""
     lo = hi = None
     for it in items:
         pts = [it.V] if it.V is not None and len(it.V) else []
@@ -666,10 +711,12 @@ def model_extent(items, proj):
 
 # --------------------------------------------------------------------------
 # Mise à l'échelle, découpe au cadre, chaînage
+# EN: Scaling, clipping to the frame, chaining
 # --------------------------------------------------------------------------
 
 def clip_segments(S, x0, y0, x1, y1):
-    """Liang-Barsky vectorisé : segments (M,4) découpés au rectangle."""
+    """Liang-Barsky vectorisé : segments (M,4) découpés au rectangle.
+    EN: Vectorised Liang-Barsky: segments (M,4) clipped to the rectangle."""
     if not len(S):
         return S
     ax, ay, bx, by = S[:, 0], S[:, 1], S[:, 2], S[:, 3]
@@ -691,7 +738,8 @@ def clip_segments(S, x0, y0, x1, y1):
 
 
 def clip_loop(L, x0, y0, x1, y1):
-    """Sutherland-Hodgman : boucle fermée (K,2) découpée au rectangle (liste de points, vide si rien ne reste)."""
+    """Sutherland-Hodgman : boucle fermée (K,2) découpée au rectangle (liste de points, vide si rien ne reste).
+    EN: Sutherland-Hodgman: closed loop (K,2) clipped to the rectangle (list of points, empty if nothing is left)."""
     pts = [(float(p[0]), float(p[1])) for p in L]
     for axis, lim, keep_ge in ((0, x0, True), (0, x1, False), (1, y0, True), (1, y1, False)):
         if not pts:
@@ -713,7 +761,8 @@ def clip_loop(L, x0, y0, x1, y1):
 
 
 def merge_segments(S, tol=1e-3):
-    """Chaîne des segments (M,4) en polylignes : [(points (K,2), fermé)]."""
+    """Chaîne des segments (M,4) en polylignes : [(points (K,2), fermé)].
+    EN: Chains segments (M,4) into polylines: [(points (K,2), closed)]."""
     if not len(S):
         return []
     pts = S.reshape(-1, 2)
@@ -751,11 +800,13 @@ def merge_segments(S, tol=1e-3):
         return path
 
     for v, lst in adj.items():            # d'abord les chemins qui partent d'une extrémité ou d'un nœud
+        # EN: first the paths that start from an end point or a junction
         if len(lst) != 2:
             for k, o in lst:
                 if not used[k]:
                     out.append((P[np.array(walk(v, k, o), dtype=np.int64)], False))
     for v, lst in adj.items():            # puis les boucles
+        # EN: then the loops
         for k, o in lst:
             if not used[k]:
                 path = walk(v, k, o)
@@ -767,7 +818,8 @@ def merge_segments(S, tol=1e-3):
 
 
 def dash_paths(paths, on=3.0, off=1.5):
-    """Découpe des polylignes en tirets (pour l'affichage des lignes cachées)."""
+    """Découpe des polylignes en tirets (pour l'affichage des lignes cachées).
+    EN: Cuts polylines into dashes (to display hidden lines)."""
     out = []
     for P, closed in paths:
         seq = [tuple(p) for p in P]
@@ -800,7 +852,8 @@ def dash_paths(paths, on=3.0, off=1.5):
 
 
 def _line_bins(S, a_tol=2e-5, r_tol=2e-3):
-    """Regroupe des segments (M,4) par droite porteuse : {clé: (direction, normale, décalage, [(t0, t1)])}."""
+    """Regroupe des segments (M,4) par droite porteuse : {clé: (direction, normale, décalage, [(t0, t1)])}.
+    EN: Groups segments (M,4) by supporting line: {key: (direction, normal, offset, [(t0, t1)])}."""
     bins = {}
     if not len(S):
         return bins
@@ -840,7 +893,8 @@ def _union(iv, tol=1e-6):
 
 
 def _subtract(iv, cut, tol=1e-6):
-    """Intervalles `iv` (unis) privés des intervalles `cut` (unis)."""
+    """Intervalles `iv` (unis) privés des intervalles `cut` (unis).
+    EN: Intervals `iv` (merged) minus the intervals `cut` (merged)."""
     out = []
     for a, b in iv:
         cur = a
@@ -871,7 +925,9 @@ def _bins_to_segments(bins):
 
 def clean_overlaps(vis, hid):
     """Règle de dessin technique : les traits visibles superposés n'en font qu'un, et un trait caché qui coïncide avec un
-    trait visible n'est pas tracé. vis, hid : listes de tableaux de segments (M,4) ; retourne les mêmes listes nettoyées."""
+    trait visible n'est pas tracé. vis, hid : listes de tableaux de segments (M,4) ; retourne les mêmes listes nettoyées.
+    EN: Technical drawing rule: overlapping visible lines become one, and a hidden line that coincides with a
+        visible line is not drawn. vis, hid: lists of segment arrays (M,4); returns the same lists cleaned up."""
     cover = {}
     out_vis = []
     for S in vis:
@@ -892,6 +948,7 @@ def clean_overlaps(vis, hid):
             merged = _union(iv)
             cut = []
             for da in (-1, 0, 1):               # droites voisines à la tolérance près
+                # EN: neighbouring lines within tolerance
                 for dr in (-1, 0, 1):
                     c = cover.get((key[0] + da, key[1] + dr))
                     if c:
@@ -907,7 +964,11 @@ def to_paper(projection, cu, cv, k, w, h):
     """Projection -> géométrie du détail en millimètres, origine au centre du cadre, découpée au cadre (w x h).
     (cu, cv) : point de la vue placé au centre ; k : mm de papier par unité du modèle.
     Retourne {"lines": [(rôle, couleur, [(points, fermé)])],
-              "fills": [(couleur, [boucles], [polygones convexes], est un texte)]}."""
+              "fills": [(couleur, [boucles], [polygones convexes], est un texte)]}.
+    EN: Projection -> detail geometry in millimetres, origin at the frame centre, clipped to the frame (w x h).
+        (cu, cv): point of the view placed at the centre; k: mm of paper per model unit.
+        Returns {"lines": [(role, colour, [(points, closed)])],
+                 "fills": [(colour, [loops], [convex polygons], is a text)]}."""
     x0, y0, x1, y1 = -w / 2.0, -h / 2.0, w / 2.0, h / 2.0
     off = np.array((cu, cv, cu, cv))
     clipped = [(role, color, clip_segments((S - off) * k, x0, y0, x1, y1)) for role, color, S in projection.lines]
@@ -959,13 +1020,18 @@ def to_paper(projection, cu, cv, k, w, h):
 
 # --------------------------------------------------------------------------
 # Export vectoriel
+# EN: Vector export
 # --------------------------------------------------------------------------
 # Une page : {"name": str, "w": mm, "h": mm, "ents": [entités]}, origine en bas à gauche, y vers le haut.
 # Entités : ('L', [(points, fermé)], épaisseur mm, (r, g, b), tirets (on, off) ou None, calque)
 #           ('F', [boucles], (r, g, b), calque)                     aplat, règle pair / impair
+# EN: A page: {"name": str, "w": mm, "h": mm, "ents": [entities]}, origin bottom left, y up.
+#     Entities: ('L', [(points, closed)], thickness mm, (r, g, b), dashes (on, off) or None, layer)
+#               ('F', [loops], (r, g, b), layer)                     fill, even-odd rule
 
 def _pdf_text(s):
-    """Chaîne PDF en UTF-16 (accents compris)."""
+    """Chaîne PDF en UTF-16 (accents compris).
+    EN: PDF string in UTF-16 (accents included)."""
     return b"<FEFF" + s.encode("utf-16-be").hex().upper().encode("ascii") + b">"
 
 
@@ -1001,7 +1067,8 @@ def _pdf_page_stream(page):
 
 
 def write_pdf(path, pages, title="", producer="Wanderer CAD"):
-    """PDF vectoriel, une page par mise en page, au format exact du papier (imprimer à 100 % donne l'échelle)."""
+    """PDF vectoriel, une page par mise en page, au format exact du papier (imprimer à 100 % donne l'échelle).
+    EN: Vector PDF, one page per layout, at the exact paper size (printing at 100 % gives the scale)."""
     objs = []
 
     def add(b):
@@ -1046,7 +1113,8 @@ def _xml(s):
 
 
 def write_svg(path, page):
-    """SVG en millimètres (une mise en page)."""
+    """SVG en millimètres (une mise en page).
+    EN: SVG in millimetres (one layout)."""
     w, h = page["w"], page["h"]
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            '<svg xmlns="http://www.w3.org/2000/svg" width="%.3fmm" height="%.3fmm" viewBox="0 0 %.3f %.3f">' % (w, h, w, h),
@@ -1082,7 +1150,8 @@ DXF_ACI = ((1, (1.0, 0.0, 0.0)), (2, (1.0, 1.0, 0.0)), (3, (0.0, 1.0, 0.0)), (4,
 
 
 def _aci(color):
-    """Couleur AutoCAD la plus proche (7 = noir / blanc)."""
+    """Couleur AutoCAD la plus proche (7 = noir / blanc).
+    EN: Nearest AutoCAD colour (7 = black / white)."""
     r, g, b = color[:3]
     if max(r, g, b) < 0.2 or min(r, g, b) > 0.9:
         return 7
@@ -1103,7 +1172,9 @@ def _dxf_name(s):
 
 def write_dxf(path, pages, gap=50.0):
     """DXF R12 (AC1009) en millimètres de papier ; plusieurs pages sont posées côte à côte.
-    Lisible par AutoCAD, Rhino, CADCraft, LibreCAD... Les aplats (textes) sont exportés par leur contour."""
+    Lisible par AutoCAD, Rhino, CADCraft, LibreCAD... Les aplats (textes) sont exportés par leur contour.
+    EN: DXF R12 (AC1009) in paper millimetres; several pages are placed side by side.
+        Readable by AutoCAD, Rhino, CADCraft, LibreCAD... Fills (texts) are exported by their outline."""
     o = []
 
     def g(code, val):
