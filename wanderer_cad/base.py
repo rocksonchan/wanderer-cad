@@ -91,6 +91,9 @@ class DessinBase(bpy.types.Operator):
     # EN: input #x,y / @x,y / d<angle
     LOCK_OK = True  # X / Y / Z : verrouille le déplacement du curseur sur un axe à partir du dernier point posé
     # EN: X / Y / Z: locks cursor movement to an axis from the last placed point
+    FREE_CORNER_AT = ()  # nombre de points posés où Ortho (F8) / Polar (F10) ne s'appliquent pas (coin opposé d'un rectangle)
+    # EN: number of placed points at which Ortho (F8) / Polar (F10) are ignored (opposite corner of a rectangle).
+    #     Fork, 2026-11-17: a rectangle's diagonal is never on an axis, so Ortho would only give a flat shape.
     PLANAR = True  # False : les points accrochés gardent leur vraie position 3D
     # EN: False: snapped points keep their true 3D position
     LOCK_3D = False  # True : une commande plane peut tout de même quitter son plan le long d'un axe verrouillé (Polyline : Z)
@@ -489,7 +492,7 @@ class DessinBase(bpy.types.Operator):
             ortho, polar = st.ortho, st.polar
         except (AttributeError, ReferenceError):
             return
-        if not (ortho or polar):
+        if not (ortho or polar) or len(self.points) in self.FREE_CORNER_AT:
             return
         u, v, _n = plane_axes(self.axis)
         O = self.points[-1]

@@ -29,6 +29,7 @@ class DESSIN_OT_rectangle(DessinBase):
     NEEDED = 2
     NUMFIELDS = 2
     HAS_CENTER = True
+    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     def prompt(self):
         if not self.points:
@@ -63,6 +64,7 @@ class _PlanBody(DessinBase):
     NEEDED = 2
     NUMFIELDS = 2
     HAS_CENTER = True
+    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     # même saisie et même aperçu que le rectangle (fonctions réutilisées, pas d'héritage entre classes Blender)
     prompt = DESSIN_OT_rectangle.prompt
@@ -1160,6 +1162,7 @@ class DESSIN_OT_ellipse_coin(DessinEllipse):
     PROP = (1,)
     NEEDED = 2
     NUMFIELDS = 2
+    FREE_CORNER_AT = (1,)   # coin opposé : Ortho / Polar ignorés  EN: opposite corner: Ortho / Polar ignored
 
     def prompt(self):
         return "first corner" if not self.points else "opposite corner   (Shift: circle, or type width, Tab, height, Enter)"

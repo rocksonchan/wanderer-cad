@@ -337,6 +337,7 @@ class _BoiteBody(DessinSolid):
     NUMFIELDS = 3
     HAS_CENTER = True
     HEIGHT_AT = (2,)
+    FREE_CORNER_AT = (1,)   # coin opposé de la base : Ortho / Polar ignorés  EN: opposite base corner: Ortho / Polar ignored
     STAGE_FIELD = {2: 2}
 
     def prompt(self):
