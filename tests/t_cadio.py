@@ -259,24 +259,10 @@ cols = {c.name for c in bpy.data.collections}
 chk("... le calque revient avec son nom DXF et sa couleur rouge", any("MURS_PORTEURS" in n for n in cols)
     and any(c.dessin_layer.use_color and near(c.dessin_layer.color, (1, 0, 0), 0.02) for c in bpy.data.collections if "MURS_PORTEURS" in c.name), sorted(cols))
 
-# ================= 4. Plus de DWG (aucun programme extérieur : règle de la plateforme d'extensions) =================
-SEC = "DWG retiré"
-import inspect
-src_all = "".join(inspect.getsource(f) for f in (m.DESSIN_OT_export_cad, m.DESSIN_OT_import_cad))
-chk("ni convertisseur ni programme extérieur : plus de cad_converter, l'export n'a plus de choix DWG", not hasattr(m, "cad_converter") and not hasattr(m, "cad_convert")
-    and "subprocess" not in src_all and "kind" not in m.DESSIN_OT_export_cad.__annotations__)
-fake_dwg = os.path.join(TMP, "dessin.dwg"); open(fake_dwg, "wb").write(b"AC1032")
-with contextlib.redirect_stdout(io.StringIO()):
-    try:
-        r = bpy.ops.dessin.import_cad('EXEC_DEFAULT', filepath=fake_dwg)
-    except RuntimeError as ex:
-        r = str(ex)
-chk("import d'un .dwg : arrêt avec un message qui dit d'enregistrer en DXF", r == {'CANCELLED'} or "save the drawing as DXF" in str(r), r)
+# ================= 4. FORK (Rockson) : le DWG est gardé dans ce fork, vérifié par t_dwg.py =================
+# (l'auteur vérifie ici que le DWG a disparu, depuis 2.96.128)
+SEC = "DXF sans extension"
 r = export(os.path.join(TMP, "sansext"), units='MM')
 chk("export sans extension : le fichier prend .dxf", r == {'FINISHED'} and os.path.isfile(os.path.join(TMP, "sansext.dxf")), r)
-chk("plus d'export DWG des mises en page", "layout_export_dwg" not in dir(bpy.ops.dessin))
-first = lambda t: (m.cmd_suggest(t) or [{"label": None}])[0]["label"]
-chk("ligne de commande : dxfin, exportmodel / saveasdxf", (first("dxfin"), first("exportmodel"), first("saveasdxf")) == ("Import DXF", "Export Model (DXF)", "Export Model (DXF)"),
-    (first("dxfin"), first("exportmodel"), first("saveasdxf")))
 shutil.rmtree(TMP, ignore_errors=True)
 summary()

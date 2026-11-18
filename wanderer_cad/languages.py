@@ -234,6 +234,8 @@ Export PDF|PDF exportieren|Exportar PDF|Esporta PDF|Exportar PDF|Экспорт 
 Export SVG|SVG exportieren|Exportar SVG|Esporta SVG|Exportar SVG|Экспорт SVG|SVG dışa aktar|导出 SVG|SVGを書き出し|SVG 내보내기
 Export DXF|DXF exportieren|Exportar DXF|Esporta DXF|Exportar DXF|Экспорт DXF|DXF dışa aktar|导出 DXF|DXFを書き出し|DXF 내보내기
 Import DXF|DXF importieren|Importar DXF|Importa DXF|Importar DXF|Импорт DXF|DXF içe aktar|导入 DXF|DXFを読み込み|DXF 가져오기
+Export DWG|DWG exportieren|Exportar DWG|Esporta DWG|Exportar DWG|Экспорт DWG|DWG dışa aktar|导出 DWG|DWGを書き出し|DWG 내보내기
+Import DXF / DWG|DXF / DWG importieren|Importar DXF / DWG|Importa DXF / DWG|Importar DXF / DWG|Импорт DXF / DWG|DXF / DWG içe aktar|导入 DXF / DWG|DXF / DWGを読み込み|DXF / DWG 가져오기
 Weld|Verschweißen|Soldar|Salda|Soldar|Сварить|Kaynakla|焊接|ウェルド|용접
 Bridge|Brücke|Puente|Ponte|Ponte|Мост|Köprü|桥接|ブリッジ|브리지
 Fill|Füllen|Rellenar|Riempi|Preencher|Заполнить|Doldur|填补|穴埋め|채우기

@@ -521,6 +521,10 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
     cmd_size: bpy.props.IntProperty(
         name="Command bar size", default=100, min=40, max=250, subtype='PERCENTAGE', update=_update_cmd_line,
         description="Size of the command bar text and pill (lower it if it looks too big on your screen)")
+    oda_path: bpy.props.StringProperty(                 # FORK (Rockson): DWG kept, see docs/development.md
+        name="ODA File Converter", default="", subtype='FILE_PATH',
+        description="DWG import and export go through the free ODA File Converter (opendesign.com). Leave empty when it is "
+                    "installed in its usual place; otherwise choose the program here (on a Mac: ODAFileConverter.app)")
     mode_icons: bpy.props.BoolProperty(
         name="Mode bar: icons only", default=False, update=_update_cmd_line,
         description="Always show the mode buttons at the bottom right of the 3D viewport (Grid Snap, Ortho, Polar, OSnap, "
@@ -683,6 +687,19 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
         col.label(text="Sides given to circles, arcs and curves by Extrude, Planar Surface, Revolve, Trim...")
         layout.prop(self, "far_warning")
 
+    def _draw_dxf(self, layout):                         # FORK: DWG
+        layout.prop(self, "oda_path")
+        try:
+            from .import_dxf import cad_converter
+            found = cad_converter()
+        except Exception:
+            found = None
+        if found is None:
+            layout.label(text="No DWG converter found: DXF works, DWG needs the free ODA File Converter", icon='INFO')
+        else:
+            layout.label(text=("ODA File Converter found" if found[0] == 'oda' else "LibreDWG tools found")
+                         + ": DWG import and export are available", icon='CHECKMARK')
+
     def _draw_shortcuts(self, layout):
         top = layout.row(align=True)
         top.prop(self, "search", icon='VIEWZOOM', text="")
@@ -721,6 +738,7 @@ class DESSIN_AP_prefs(bpy.types.AddonPreferences):
               ("gumball", "Gumball", True, "_draw_gumball"),
               ("toolbar", "Toolbar", True, "_draw_toolbar"),
               ("perf", "Performance and precision", True, "_draw_performance"),
+              ("dxf", "DXF / DWG", True, "_draw_dxf"),                 # FORK: DWG
               ("shortcuts", "Shortcuts", True, "_draw_shortcuts"))
 
     def draw(self, context):

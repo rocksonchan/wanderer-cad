@@ -100,8 +100,8 @@ exp = getattr(bpy.types.TOPBAR_MT_file_export.draw, "_draw_funcs", [])
 imp = getattr(bpy.types.TOPBAR_MT_file_import.draw, "_draw_funcs", [])
 chk("menus File > Import et File > Export : l'entrée « DXF drawing (Wanderer) » y est", any(f.__name__ == "menu_export_cad" for f in exp) and any(f.__name__ == "menu_import_cad" for f in imp),
     ([f.__name__ for f in exp][-2:], [f.__name__ for f in imp][-2:]))
-chk("préférences : plus de réglage « ODA File Converter » ni de panneau DXF / DWG (aucun programme extérieur)",
-    prefs.bl_rna.properties.get("oda_path") is None and ("panel", "dessin_prefs_dxf") not in calls)
+chk("préférences (FORK : DWG gardé) : réglage « ODA File Converter » et panneau DXF / DWG présents",   # l'auteur vérifie leur absence depuis 2.96.128
+    prefs.bl_rna.properties.get("oda_path") is not None and ("panel", "dessin_prefs_dxf") in calls)
 prefs.cmd_line = True
 r = bpy.ops.dessin.prefs_reset('EXEC_DEFAULT')
 chk("« Reset to defaults » décoche le réglage ; la barre repasse en libellés", r == {'FINISHED'} and prefs.mode_icons is False and core.pref("mode_icons") is False and CL.modes_icons(0) is False

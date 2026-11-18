@@ -93,6 +93,40 @@ Shift pan and Ctrl/Command zoom. Require `PASS navigation mouse suite` in its
 output. Both suites preserve scene objects; never run them in a working session.
 Note: both suites load this checkout's `wanderer_cad`, not `WANDERER_SRC`.
 
+## Kept against upstream: DWG import and export (always keep)
+
+**Rockson's rule: this feature stays in the fork whatever the author does.**
+Upstream 2.96.128 removed DWG (no outside programs). Branch `codex/dwg-restore`
+(18 November 2026) puts back the author's own 2.96.127 code, unchanged:
+
+- `import_dxf.py`: `cad_converter()` finds ODA File Converter (or LibreDWG),
+  `cad_convert()` / `dxf_file_to()`; Import and Export Model accept `.dwg`, with
+  a DWG version (2018 default).
+- `layout.py`: `DESSIN_OT_layout_export_dwg` and the **DWG** button in Print.
+- `preferences.py` + `core.py`: the `oda_path` setting (default `""`) and the
+  "DXF / DWG" preferences section.
+- `command_line.py`, `languages.py`: `importdwg`, `dwgin`, `exportdwg`,
+  `dwgout`, `saveasdwg` and their labels.
+
+Every fork line carries a `FORK` comment (`grep -n FORK wanderer_cad/*.py`).
+
+Tests: `tests/t_dwg.py` (32 checks: the author's 2.96.127 DWG tests with a fake
+converter, plus a real round trip through `/Applications/ODAFileConverter.app`
+when installed). The author's tests that check DWG is *gone* are flipped in the
+fork: `t_cadio.py` section 4 and one check of `t_modeicons.py`.
+
+Known limit (same as 2.96.127): Wanderer's R12 DXF keeps its units in a
+comment, which ODA drops, so an exported DWG is "unitless" (the numbers are in
+the unit chosen at export). When re-importing such a DWG, set Units by hand.
+
+**Backup:** `fork-features/dwg-restore.patch` (code + tests), a copy in the study
+folder `~/Documents/Claude/Projects/Wanderer blender addon study/fork-features/`.
+If an author update breaks or removes DWG, re-apply it on the update branch:
+
+```sh
+git apply --3way fork-features/dwg-restore.patch
+```
+
 ## Replaced by upstream: radius dimension on fillet corners
 
 Our `codex/fillet-radius-dim` (16 November 2026, `8540b50`) let **Radius /
@@ -200,8 +234,14 @@ git diff HEAD...upstream/main -- wanderer_cad/preferences.py wanderer_cad/regist
 git merge upstream/main
 ```
 
-Resolve any conflicts by preserving the author's new behaviour and the reset
-feature. Run the focused suite again, inspect affected upstream tests, and
+**Fork features to keep after every update (check before merging into main):**
+
+- [ ] **DWG import / export** — run `tests/t_dwg.py`. If it fails, or the merge
+  removed DWG, re-apply `fork-features/dwg-restore.patch` (see "Kept against
+  upstream: DWG import and export") and test again.
+
+Resolve any conflicts by preserving the author's new behaviour and the
+personal features. Run the focused suite again, inspect affected upstream tests, and
 reload the add-on after the merge is complete. A clean text merge still needs
 behaviour checks. Do not force-push or overwrite the author's files wholesale.
 

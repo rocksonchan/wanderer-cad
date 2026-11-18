@@ -198,8 +198,9 @@ CMD_ACTIONS = (
     ("Export PDF", "exportpdf pdf print plot", "", "Layout: vector PDF at the exact paper size, one page per layout (print at 100 % for a drawing at scale)", _act_invoke("dessin.layout_export_pdf")),
     ("Export SVG", "exportsvg svg", "", "Layout: vector SVG in millimeters (Illustrator, Inkscape...)", _act_invoke("dessin.layout_export_svg")),
     ("Export DXF", "exportdxf dxfout", "", "Layout: DXF in paper millimeters for AutoCAD, Rhino, CADCraft...", _act_invoke("dessin.layout_export_dxf")),
-    ("Export Model (DXF)", "exportmodel exportcad saveasdxf wblock", "", "Exports the model as a DXF drawing: curves, arcs and circles, 3D faces of the solids, text, layers and colors", _act_invoke("dessin.export_cad")),
-    ("Import DXF", "importdxf importcad dxfin", "", "Imports a DXF drawing with its layers, colors, blocks and text", _act_invoke("dessin.import_cad")),
+    ("Export DWG", "exportdwg dwgout", "", "Layout: the sheets as a DWG drawing in paper millimeters (needs the free ODA File Converter)", _act_invoke("dessin.layout_export_dwg")),    # FORK: DWG
+    ("Export Model (DXF / DWG)", "exportmodel exportcad saveasdwg saveasdxf wblock", "", "Exports the model as a DXF or DWG drawing: curves, arcs and circles, 3D faces of the solids, text, layers and colors", _act_invoke("dessin.export_cad")),
+    ("Import DXF / DWG", "importdwg importdxf importcad dxfin dwgin", "", "Imports a DXF or DWG drawing with its layers, colors, blocks and text (DWG needs the free ODA File Converter)", _act_invoke("dessin.import_cad")),
 )
 
 

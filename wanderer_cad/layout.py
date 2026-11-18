@@ -3238,6 +3238,32 @@ class DESSIN_OT_layout_export_dxf(_LayoutExport, bpy.types.Operator):
         return path
 
 
+class DESSIN_OT_layout_export_dwg(_LayoutExport, bpy.types.Operator):     # FORK (Rockson): DWG kept, see docs/development.md
+    bl_idname = "dessin.layout_export_dwg"
+    bl_label = "Export DWG"
+    bl_description = ("DWG in paper millimeters for AutoCAD: the same drawing as Export DXF, converted by the free ODA File "
+                      "Converter installed on this computer")
+    EXT = ".dwg"
+    filter_glob: bpy.props.StringProperty(default="*.dwg", options={'HIDDEN'})
+
+    def write(self, path, pages):
+        import shutil
+        import tempfile
+        from .import_dxf import cad_convert
+        tmp = tempfile.mkdtemp(prefix="wd_layout_dwg_")
+        try:
+            dxf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".dxf")
+            le.write_dxf(dxf, pages)
+            made = cad_convert(dxf, "DWG")
+            try:
+                shutil.move(made, path)
+            finally:
+                shutil.rmtree(os.path.dirname(made), ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return path
+
+
 # --------------------------------------------------------------------------
 # Interface : onglets de la barre de vues, menus, panneaux
 # --------------------------------------------------------------------------
@@ -3895,6 +3921,7 @@ class DESSIN_PT_layout_print(bpy.types.Panel):
         row = col.row(align=True)
         row.operator(DESSIN_OT_layout_export_svg.bl_idname, text="SVG")
         row.operator(DESSIN_OT_layout_export_dxf.bl_idname, text="DXF")
+        row.operator(DESSIN_OT_layout_export_dwg.bl_idname, text="DWG")     # FORK: DWG
 
 
 class DESSIN_PT_layout_print_layers(bpy.types.Panel):
@@ -3932,7 +3959,7 @@ LAYOUT_CLASSES = (
     DESSIN_OT_layout_delete, DESSIN_OT_layout_duplicate, DESSIN_OT_layout_page_setup, DESSIN_OT_layout_erase,
     DESSIN_OT_layout_detail, DESSIN_OT_detail_add, DESSIN_OT_detail_update, DESSIN_OT_detail_fit, DESSIN_OT_detail_scale,
     DESSIN_OT_detail_view_set, DESSIN_OT_detail_layer, DESSIN_OT_detail_pan, DESSIN_OT_detail_text_match,
-    DESSIN_OT_layout_export_pdf, DESSIN_OT_layout_export_svg, DESSIN_OT_layout_export_dxf,
+    DESSIN_OT_layout_export_pdf, DESSIN_OT_layout_export_svg, DESSIN_OT_layout_export_dxf, DESSIN_OT_layout_export_dwg,
     DESSIN_OT_viewport_grip, DESSIN_OT_viewport_paper, DESSIN_MT_viewport_scale, DESSIN_GT_vp_grip, DESSIN_GT_vp_scale, DESSIN_GGT_viewport_grips,
     DESSIN_PT_layout, DESSIN_PT_layout_page, DESSIN_PT_layout_detail, DESSIN_PT_layout_layers, DESSIN_PT_layout_print,
     DESSIN_PT_layout_print_layers,
